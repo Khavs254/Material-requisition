@@ -2899,7 +2899,7 @@ function renderCatalogControls(r){
   const cats = catalogCategories();
   const catSel = '<select class="f-select" data-field="category">'+cats.map(k=>'<option value="'+esc(k)+'" '+(k===r.category?'selected':'')+'>'+esc(CATALOG[k].label||k)+'</option>').join('')+'</select>';
   const items = (CATALOG[r.category] && CATALOG[r.category].items) || [];
-  const itemSel = '<select class="f-select" data-field="sizeIdx">'+items.map((it,i)=>'<option value="'+i+'" '+(i===num(r.sizeIdx)?'selected':'')+'>'+esc(it.size)+'</option>').join('')+'</select>';
+  const itemSel = '<select class="f-select" data-field="sizeIdx">'+items.map((it,i)=>'<option value="'+i+'" '+(i===num(r.sizeIdx)?'selected':'')+'>'+esc(it.size)+(it.t?' x '+it.t+'mm':'')+'</option>').join('')+'</select>';
   return catSel+itemSel;
 }
 function renderMaterialRow(g,r,ri){
