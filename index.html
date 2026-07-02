@@ -2667,7 +2667,7 @@ function catalogItem(row){ const cat = CATALOG[row.category]; return cat && cat.
 function catalogLabel(row){
   const item = catalogItem(row);
   if(!item) return row.profile || '';
-  return item.size + (item.kgPerM ? ' ('+fmt(item.kgPerM,3)+' kg/m)' : item.kgPerPc ? ' ('+fmt(item.kgPerPc,1)+' kg/pc)' : '');
+  const label=(item.label||row.category||'').trim(); const size=(item.size||'').replace(new RegExp('^'+label+'\\s*','i'),'').trim(); const th=item.t?('x'+item.t):''; return (label?label+' ':'')+size+th+(item.kgPerM ? ' ('+fmt(item.kgPerM,3)+' kg/m)' : item.kgPerPc ? ' ('+fmt(item.kgPerPc,1)+' kg/pc)' : '');
 }
 function plateThicknessFromText(text){ const m=String(text||'').match(/x\s*([0-9.]+)\s*mm/i) || String(text||'').match(/([0-9.]+)\s*mm/i); return m?num(m[1]):0; }
 
