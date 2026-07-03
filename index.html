@@ -2680,8 +2680,11 @@ function blankMaterialRow(over){
 function blankGroup(name){ return { id:uid(), name:name||'NEW SECTION', rows:[blankMaterialRow()] }; }
 function blankGeneralRow(){ return { id:uid(), desc:'', qty:'', unit:'No', remarks:'' }; }
 function blankGeneralGroup(name){ return { id:uid(), name:name||'GENERAL ITEMS', rows:[blankGeneralRow()] }; }
+function blankPaintCoat(label,type,spread,can,enabled){
+  return { id:uid(), label:label||'New Coat', type:type||'', spread:spread===undefined?10:spread, can:can===undefined?4:can, enabled:enabled===undefined?true:enabled };
+}
 function blankPaintRow(){
-  return { id:uid(), item:'', area:'', wastage:10, twoCoat:true, primer:{ type:'Epoxy Primer', spread:10, can:20 }, coat1:{ type:'', spread:10, can:4 }, coat2:{ type:'', spread:10, can:4 } };
+  return { id:uid(), item:'', area:'', wastage:10, coats:[ blankPaintCoat('Primer','Epoxy Primer',10,20,true), blankPaintCoat('1st Coat','',10,4,true), blankPaintCoat('2nd Coat','',10,4,false) ] };
 }
 function defaultState(){
   return { id:uuid(), meta:{ project:'', client:'', location:'', refNo:'', date:todayISO(), preparedBy:'', requestedBy:'', printStock:false, printElementCols:true }, materialGroups:[ blankGroup('ANGLE SECTION') ], paintRows:[ blankPaintRow() ], generalGroups:[ blankGeneralGroup('GENERAL ITEMS') ] };
@@ -2724,6 +2727,19 @@ function migrateState(s){
   });
   if(!s.materialGroups || !s.materialGroups.length) s.materialGroups = [blankGroup('ANGLE SECTION')];
   if(!s.paintRows) s.paintRows = [];
+  s.paintRows.forEach(p=>{
+    if(!p.id) p.id = uid();
+    if(!p.coats){
+      // migrate legacy primer/coat1/coat2 structure to dynamic coats array
+      const legacy = [];
+      if(p.primer) legacy.push(blankPaintCoat('Primer', p.primer.type, num(p.primer.spread)||10, num(p.primer.can)||20, true));
+      if(p.coat1) legacy.push(blankPaintCoat('1st Coat', p.coat1.type, num(p.coat1.spread)||10, num(p.coat1.can)||4, true));
+      if(p.coat2) legacy.push(blankPaintCoat('2nd Coat', p.coat2.type, num(p.coat2.spread)||10, num(p.coat2.can)||4, !!p.twoCoat));
+      p.coats = legacy.length ? legacy : [blankPaintCoat('Primer','',10,20,true), blankPaintCoat('1st Coat','',10,4,true)];
+      delete p.primer; delete p.coat1; delete p.coat2; delete p.twoCoat;
+    }
+    p.coats.forEach(c=>{ if(!c.id) c.id = uid(); if(c.enabled===undefined) c.enabled = true; });
+  });
   if(!s.generalGroups || !s.generalGroups.length) s.generalGroups = [blankGeneralGroup('GENERAL ITEMS')];
   s.generalGroups.forEach(g=>{ if(!g.id) g.id=uid(); (g.rows||[]).forEach(r=>{ if(!r.id) r.id=uid(); if(!r.unit) r.unit='No'; }); if(!g.rows||!g.rows.length) g.rows=[blankGeneralRow()]; });
   return s;
@@ -2827,20 +2843,23 @@ function recalcAllMaterials(){
 /* ============================ PAINT CALC ============================ */
 function paintRowCalc(p){
   const area = num(p.area), wf = 1 + num(p.wastage)/100;
-  const primerReq = p.primer.type ? area/Math.max(num(p.primer.spread),0.0001)*wf : 0;
-  const coat1Req = p.coat1.type ? area/Math.max(num(p.coat1.spread),0.0001)*wf : 0;
-  const coat2Req = (p.twoCoat && p.coat2.type) ? area/Math.max(num(p.coat2.spread),0.0001)*wf : 0;
-  return { primerReq, coat1Req, coat2Req };
+  const coats = (p.coats||[]).map(c=>{
+    const req = (c.enabled && c.type) ? area/Math.max(num(c.spread),0.0001)*wf : 0;
+    return { id:c.id, label:c.label, type:c.type, can:c.can, req };
+  });
+  const total = coats.reduce((s,c)=>s+c.req,0);
+  return { coats, total };
 }
 function paintProcurementRows(){
   const map = {};
   state.paintRows.forEach(p=>{
     const c = paintRowCalc(p);
-    [['Primer',p.primer,c.primerReq],['1st Coat',p.coat1,c.coat1Req],['2nd Coat',p.coat2,c.coat2Req]].forEach(([cat,coat,liters])=>{
-      if(!coat.type || liters<=0) return;
-      const key = cat+'|'+coat.type+'|'+coat.can;
-      if(!map[key]) map[key] = {cat,type:coat.type,can:num(coat.can),liters:0};
-      map[key].liters += liters;
+    const itemName = (p.item||'').trim() || 'Unnamed item';
+    c.coats.forEach(coat=>{
+      if(!coat.type || coat.req<=0) return;
+      const key = itemName+'|'+coat.label+'|'+coat.type+'|'+coat.can;
+      if(!map[key]) map[key] = {item:itemName,cat:coat.label,type:coat.type,can:num(coat.can),liters:0};
+      map[key].liters += coat.req;
     });
   });
   return Object.values(map).map(r=>{ r.paintOnly=r.liters*.8; r.thinner=r.liters*.2; r.cans=ceilSafe(r.paintOnly/Math.max(r.can,0.0001)); return r; });
@@ -2939,20 +2958,21 @@ function renderPaintCard(){
   const rows = state.paintRows.map((p,pi)=>renderPaintRow(p,pi)).join('');
   return '<div class="card"><div class="card-head"><h2>Paint Calculator</h2><div class="pitch">Enter surface area per item; coverage rates and wastage auto-calculate liquid required and cans to order.</div><button class="btn btn-add" data-action="add-paint">+ Paint Item</button></div>'+(rows || '<div class="empty-row">No paint items yet.</div>')+'</div>';
 }
-function paintCoatFields(p, coatKey, label){
-  const c = p[coatKey];
-  return '<div class="coat-block"><h4>'+label+'</h4><div class="coat-fields"><div><label>Product</label><input class="f-text" data-paint="'+p.id+'" data-coat="'+coatKey+'" data-cfield="type" value="'+esc(c.type)+'" placeholder="e.g. Grey Oxide"></div><div><label>Spread sqm/L</label><input class="f-num" data-paint="'+p.id+'" data-coat="'+coatKey+'" data-cfield="spread" value="'+esc(c.spread)+'"></div><div><label>Can size (L)</label><input class="f-num" data-paint="'+p.id+'" data-coat="'+coatKey+'" data-cfield="can" value="'+esc(c.can)+'"></div></div></div>';
+function paintCoatFields(p, c){
+  return '<div class="coat-block" data-coatblock="'+c.id+'"><div style="display:flex; align-items:center; gap:6px; margin-bottom:2px;"><input class="f-text" style="font-weight:700; font-size:12px; border:none; background:transparent; padding:2px 0; width:auto; flex:1;" data-paint="'+p.id+'" data-coat="'+c.id+'" data-cfield="label" value="'+esc(c.label)+'" placeholder="Coat name e.g. 3rd Coat"><label class="inline-chk" style="font-size:10.5px; display:inline-flex; align-items:center; gap:4px; white-space:nowrap;"><input type="checkbox" data-paint="'+p.id+'" data-coat="'+c.id+'" data-cfield="enabled" '+(c.enabled?'checked':'')+'> Include</label><button class="btn-icon" data-action="remove-coat" data-paint="'+p.id+'" data-coat="'+c.id+'" title="Remove this coat">x</button></div><div class="coat-fields"><div><label>Product</label><input class="f-text" data-paint="'+p.id+'" data-coat="'+c.id+'" data-cfield="type" value="'+esc(c.type)+'" placeholder="e.g. Grey Oxide"></div><div><label>Spread sqm/L</label><input class="f-num" data-paint="'+p.id+'" data-coat="'+c.id+'" data-cfield="spread" value="'+esc(c.spread)+'"></div><div><label>Can size (L)</label><input class="f-num" data-paint="'+p.id+'" data-coat="'+c.id+'" data-cfield="can" value="'+esc(c.can)+'"></div></div></div>';
 }
 function renderPaintRow(p,pi){
   const c = paintRowCalc(p);
-  return '<div class="group-block" data-paintrow="'+p.id+'"><div class="paint-row-grid"><label style="font-size:10.5px; color:var(--steel); font-weight:600;">Paint Item / Description<input class="f-text" data-paint="'+p.id+'" data-pfield="item" value="'+esc(p.item)+'" placeholder="e.g. Steel columns - tank tower"></label><label style="font-size:10.5px; color:var(--steel); font-weight:600;">Area (sqm, both faces if applicable)<input class="f-num" data-paint="'+p.id+'" data-pfield="area" value="'+esc(p.area)+'"></label><label style="font-size:10.5px; color:var(--steel); font-weight:600;">Wastage %<input class="f-num" data-paint="'+p.id+'" data-pfield="wastage" value="'+esc(p.wastage)+'"></label></div><div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px;">'+paintCoatFields(p,'primer','Primer')+paintCoatFields(p,'coat1','1st Coat / Topcoat')+paintCoatFields(p,'coat2','2nd Coat (optional)')+'</div><label class="inline-chk" style="font-size:11px; display:inline-flex; align-items:center; gap:5px; margin-top:6px;"><input type="checkbox" data-paint="'+p.id+'" data-pfield="twoCoat" '+(p.twoCoat?'checked':'')+'> Apply 2nd coat</label><div class="paint-readouts"><span>Primer required: <b>'+fmt(c.primerReq,2)+' L</b></span><span>1st coat required: <b>'+fmt(c.coat1Req,2)+' L</b></span><span>2nd coat required: <b>'+fmt(c.coat2Req,2)+' L</b></span><span>Row total liquid: <b>'+fmt(c.primerReq+c.coat1Req+c.coat2Req,2)+' L</b></span><span style="margin-left:auto;"><button class="btn-ghost" data-action="remove-paint" data-paint="'+p.id+'">Remove item</button></span></div></div>';
+  const coatBlocks = (p.coats||[]).map(coat=>paintCoatFields(p,coat)).join('');
+  const readouts = c.coats.map(coat=>'<span>'+esc(coat.label||'Coat')+': <b>'+fmt(coat.req,2)+' L</b></span>').join('');
+  return '<div class="group-block" data-paintrow="'+p.id+'"><div class="paint-row-grid"><label style="font-size:10.5px; color:var(--steel); font-weight:600;">Paint Item / Description<input class="f-text" data-paint="'+p.id+'" data-pfield="item" value="'+esc(p.item)+'" placeholder="e.g. Steel columns - tank tower"></label><label style="font-size:10.5px; color:var(--steel); font-weight:600;">Area (sqm, both faces if applicable)<input class="f-num" data-paint="'+p.id+'" data-pfield="area" value="'+esc(p.area)+'"></label><label style="font-size:10.5px; color:var(--steel); font-weight:600;">Wastage %<input class="f-num" data-paint="'+p.id+'" data-pfield="wastage" value="'+esc(p.wastage)+'"></label></div><div class="coat-grid" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:10px;">'+coatBlocks+'</div><div style="margin-top:8px;"><button class="btn-ghost" data-action="add-coat" data-paint="'+p.id+'">+ Coat</button></div><div class="paint-readouts">'+readouts+'<span>Row total liquid: <b>'+fmt(c.total,2)+' L</b></span><span style="margin-left:auto;"><button class="btn-ghost" data-action="remove-paint" data-paint="'+p.id+'">Remove item</button></span></div></div>';
 }
 function rpDr5A77MDGrZBABiXNLkExAbJSbnaUkqJ(){
   const rows = paintProcurementRows();
   if(!rows.length) return '<div class="card"><div class="card-head"><h2>Paint Procurement Summary</h2></div><div class="empty-row">Enter paint items above to generate the procurement summary.</div></div>';
-  const body = rows.map(r=>'<tr><td>'+esc(r.cat)+'</td><td>'+esc(r.type)+'</td><td class="readout-cell">'+fmt(r.liters,2)+'</td><td class="readout-cell">'+fmt(r.paintOnly,2)+'</td><td class="readout-cell">'+fmt(r.thinner,2)+'</td><td class="readout-cell">'+fmt(r.can,0)+'</td><td class="readout-cell">'+fmt(r.cans,0)+'</td></tr>').join('');
+  const body = rows.map(r=>'<tr><td>'+esc(r.item)+'</td><td>'+esc(r.cat)+'</td><td>'+esc(r.type)+'</td><td class="readout-cell">'+fmt(r.liters,2)+'</td><td class="readout-cell">'+fmt(r.paintOnly,2)+'</td><td class="readout-cell">'+fmt(r.thinner,2)+'</td><td class="readout-cell">'+fmt(r.can,0)+'</td><td class="readout-cell">'+fmt(r.cans,0)+'</td></tr>').join('');
   const totalCans = rows.reduce((s,r)=>s+r.cans,0), totalThinner = rows.reduce((s,r)=>s+r.thinner,0);
-  return '<div class="card"><div class="card-head"><h2>Paint Procurement Summary</h2><div class="pitch">Auto-generated, aggregated by product and can size, 80/20 paint-to-thinner split applied.</div></div><div class="table-scroll"><table class="items-table"><thead><tr><th>Category</th><th>Product</th><th class="col-sm">Total Liquid (L)</th><th class="col-sm">Paint 80% (L)</th><th class="col-sm">Thinner 20% (L)</th><th class="col-sm">Can Size (L)</th><th class="col-sm">Cans to Order</th></tr></thead><tbody>'+body+'</tbody><tfoot><tr class="sum-row"><td colspan="4" style="text-align:right;">Totals:</td><td class="readout-cell">'+fmt(totalThinner,2)+' L thinner</td><td></td><td class="readout-cell">'+fmt(totalCans,0)+' cans</td></tr></tfoot></table></div></div>';
+  return '<div class="card"><div class="card-head"><h2>Paint Procurement Summary</h2><div class="pitch">Auto-generated, kept separate per paint item, aggregated by category/product/can size within each item, 80/20 paint-to-thinner split applied.</div></div><div class="table-scroll"><table class="items-table"><thead><tr><th>Item</th><th>Category</th><th>Product</th><th class="col-sm">Total Liquid (L)</th><th class="col-sm">Paint 80% (L)</th><th class="col-sm">Thinner 20% (L)</th><th class="col-sm">Can Size (L)</th><th class="col-sm">Cans to Order</th></tr></thead><tbody>'+body+'</tbody><tfoot><tr class="sum-row"><td colspan="5" style="text-align:right;">Totals:</td><td class="readout-cell">'+fmt(totalThinner,2)+' L thinner</td><td></td><td class="readout-cell">'+fmt(totalCans,0)+' cans</td></tr></tfoot></table></div></div>';
 }
 
 /* ============================ EVENTS ============================ */
@@ -3004,7 +3024,12 @@ document.addEventListener('input', e=>{
   }
   if(t.dataset.paint && t.dataset.coat && t.dataset.cfield){
     const p=state.paintRows.find(x=>x.id===t.dataset.paint);
-    if(p){ p[t.dataset.coat][t.dataset.cfield]=t.value; saveLocalOnly(); }
+    const c=p && (p.coats||[]).find(x=>x.id===t.dataset.coat);
+    if(c){
+      c[t.dataset.cfield]=t.type==='checkbox'?t.checked:t.value;
+      if(t.type==='checkbox'){ saveState(); rerender(); }
+      else { saveLocalOnly(); }
+    }
     return;
   }
 });
@@ -3027,6 +3052,8 @@ document.addEventListener('click', e=>{
     case 'remove-row': { const g=state.materialGroups.find(x=>x.id===ds.group); if(g){ g.rows.splice(+ds.row,1); if(!g.rows.length) g.rows.push(blankMaterialRow()); } saveState(); rerender(); break; }
     case 'add-paint': state.paintRows.push(blankPaintRow()); saveState(); rerender(); break;
     case 'remove-paint': state.paintRows=state.paintRows.filter(p=>p.id!==ds.paint); saveState(); rerender(); break;
+    case 'add-coat': { const p=state.paintRows.find(x=>x.id===ds.paint); if(p){ (p.coats=p.coats||[]).push(blankPaintCoat('New Coat','',10,4,true)); } saveState(); rerender(); break; }
+    case 'remove-coat': { const p=state.paintRows.find(x=>x.id===ds.paint); if(p && p.coats && p.coats.length>1){ p.coats=p.coats.filter(c=>c.id!==ds.coat); } saveState(); rerender(); break; }
     case 'add-general-group': (state.generalGroups=state.generalGroups||[]).push(blankGeneralGroup('NEW ITEM GROUP')); saveState(); rerender(); break;
     case 'remove-general-group': if(confirm('Remove this item group?')){ state.generalGroups=(state.generalGroups||[]).filter(g=>g.id!==ds.ggroup); saveState(); rerender(); } break;
     case 'add-general-row': { const g=(state.generalGroups||[]).find(x=>x.id===ds.ggroup); if(g) g.rows.push(blankGeneralRow()); saveState(); rerender(); break; }
@@ -3065,7 +3092,13 @@ function buildPrintHTML(){
   }).join('');
   const paintProc=paintProcurementRows();
   const totalCans=paintProc.reduce((s,r)=>s+r.cans,0), totalThinner=paintProc.reduce((s,r)=>s+r.thinner,0);
-  const paintRowsHtml=paintProc.map(r=>'<tr><td class="p-desc">'+esc(r.cat)+'</td><td class="p-desc">'+esc(r.type)+'</td><td class="p-num">'+fmt(r.liters,2)+'</td><td class="p-num">'+fmt(r.paintOnly,2)+'</td><td class="p-num">'+fmt(r.thinner,2)+'</td><td class="p-num">'+fmt(r.can,0)+'</td><td class="p-num">'+fmt(r.cans,0)+'</td></tr>').join('');
+  const paintItemOrder=[]; paintProc.forEach(r=>{ if(!paintItemOrder.includes(r.item)) paintItemOrder.push(r.item); });
+  const paintRowsHtml=paintItemOrder.map(itemName=>{
+    const head='<tr class="p-grouphead"><td colspan="7">'+esc(itemName)+'</td></tr>';
+    const itemRows=paintProc.filter(r=>r.item===itemName);
+    const rows=itemRows.map(r=>'<tr><td class="p-desc">'+esc(r.cat)+'</td><td class="p-desc">'+esc(r.type)+'</td><td class="p-num">'+fmt(r.liters,2)+'</td><td class="p-num">'+fmt(r.paintOnly,2)+'</td><td class="p-num">'+fmt(r.thinner,2)+'</td><td class="p-num">'+fmt(r.can,0)+'</td><td class="p-num">'+fmt(r.cans,0)+'</td></tr>').join('');
+    return head+rows;
+  }).join('');
   const matColspan=colCount;
   const labelColspan=3+(showElCols?2:0), tailColspan=4+(showStock?1:0);
   return '<div class="print-page"><div class="p-letterhead"><div class="p-firm-name-block"><div class="p-firm-name">ROPA ENGINEERING</div><div class="p-firm-line">Structural Steel Fabrication &amp; Erection - Nairobi, Kenya</div></div><div class="spacer" style="flex:1;"></div><div class="p-doctitle"><div class="p-doclabel">MATERIAL REQUISITION</div><div class="p-docmeta">No: '+(esc(m.refNo)||'-')+'</div><div class="p-docmeta">Date: '+esc(m.date)+'</div></div></div><div class="p-projblock"><div><b>Project:</b> '+(esc(m.project)||'-')+'</div><div><b>Client:</b> '+(esc(m.client)||'-')+'&nbsp;&nbsp;&nbsp;<b>Location:</b> '+(esc(m.location)||'-')+'</div></div><div class="p-section-title">Material Requisition</div><table class="p-table"><thead><tr><th class="p-no">No</th><th class="p-desc">Section / Profile</th>'+(showElCols?'<th>Element Qty</th><th>Element Length</th>':'')+'<th>T-Length</th><th>T-Mass</th><th>Std Order Length</th><th>Bars Reqd</th><th>Unit</th>'+(showStock?'<th>Available in Stock</th>':'')+'<th>Qty to Order</th></tr></thead><tbody>'+(matRows || '<tr><td colspan="'+matColspan+'" style="text-align:center;color:#888;">No material items entered.</td></tr>')+'</tbody><tfoot><tr class="p-sumrow"><td colspan="'+labelColspan+'" style="text-align:right;">Grand Total Mass:</td><td class="p-num">'+fmt(grandMassTotal(),1)+' kg</td><td colspan="'+tailColspan+'"></td></tr></tfoot></table>'+(generalRowsHtml?'<div class="p-section-title">General Items / Accessories</div><table class="p-table"><thead><tr><th class="p-no">No</th><th class="p-desc">Item Description</th><th>Qty</th><th>Unit</th><th class="p-desc">Remarks</th></tr></thead><tbody>'+generalRowsHtml+'</tbody></table>':'')+(paintProc.length?'<div class="p-section-title">Paint Procurement Summary</div><table class="p-table"><thead><tr><th class="p-desc">Category</th><th class="p-desc">Product</th><th>Total Liquid (L)</th><th>Paint 80% (L)</th><th>Thinner 20% (L)</th><th>Can Size (L)</th><th>Cans to Order</th></tr></thead><tbody>'+paintRowsHtml+'</tbody><tfoot><tr class="p-sumrow"><td colspan="4" style="text-align:right;">Totals:</td><td class="p-num">'+fmt(totalThinner,2)+' L</td><td></td><td class="p-num">'+fmt(totalCans,0)+' cans</td></tr></tfoot></table>':'')+'<div class="p-sig-row"><div class="p-sig-col"><div class="p-sig-line">&nbsp;</div></div><div class="p-sig-col"><div class="p-sig-line">&nbsp;</div></div><div class="p-sig-col"><div class="p-sig-line">&nbsp;</div></div><div class="p-sig-col"><img class="p-sig-img" src="'+SIGNATURE_DATA_URI+'" alt="Signature"><div class="p-sig-line">Dennis Kihiu</div></div></div><div class="p-foot">Ropa Engineering - Material Requisition generated '+new Date().toLocaleDateString()+'</div></div>';
