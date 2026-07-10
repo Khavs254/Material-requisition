@@ -191,6 +191,26 @@ table.items-table{width:100%; border-collapse:collapse; font-size:12.5px;}
   .p-sig-img{height:40px; display:block; margin-bottom:-8px;}
   .p-foot{font-size:8pt; color:#777; margin-top:14px; text-align:center;}
 }
+
+/* ---- modal + import + installer ---- */
+.modal-back{position:fixed; inset:0; background:rgba(20,48,79,.55); z-index:80; display:flex; align-items:flex-start; justify-content:center; padding:20px 10px; overflow:auto;}
+.modal-card{background:var(--card); border:1px solid var(--line); border-radius:var(--r); width:min(1150px,100%); box-shadow:0 18px 50px rgba(0,0,0,.35);}
+.modal-head{display:flex; align-items:center; gap:10px; padding:10px 14px; border-bottom:1px solid var(--line);}
+.modal-head h2{margin:0; font-family:'Roboto Slab',Georgia,serif; font-size:15px; color:var(--navy);}
+.modal-body{padding:12px 14px;}
+.modal-foot{display:flex; align-items:center; gap:8px; padding:10px 14px; border-top:1px solid var(--line); background:#FAF8F3;}
+.m-text,.m-num,.m-select{width:100%; border:1px solid var(--line); border-radius:4px; padding:4px 6px; font:inherit; font-size:12px; background:#fff; color:var(--ink);}
+.m-num{text-align:right; font-family:'IBM Plex Mono',monospace;}
+.imp-opts{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:8px 10px; padding:10px; background:#FAF8F3; border:1px solid var(--line); border-radius:4px;}
+.imp-opts label{font-size:10.5px; color:var(--steel); font-weight:600; display:block;}
+.imp-opts label.inline-chk{display:flex; align-items:center; gap:6px; font-weight:600;}
+.imp-opts label.inline-chk input{width:auto;}
+@media print{
+  .modal-back{display:none !important;}
+  .p-inst-block{margin-bottom:10px;}
+  .p-inst-net td{background:#14304F; color:#fff; font-weight:700;}
+  .p-nb{font-size:9pt; color:#444; margin-top:8px; font-style:italic;}
+}
 </style>
 </head>
 <body>
@@ -207,6 +227,8 @@ table.items-table{width:100%; border-collapse:collapse; font-size:12.5px;}
     <button class="tb-btn" data-action="export-xlsx">⬇ Export Excel</button>
     <label class="tb-btn" for="importFile">⬆ Import JSON</label>
     <input type="file" id="importFile" accept="application/json">
+    <label class="tb-btn" for="teklaFile">&#8681; Import Tekla List</label>
+    <input type="file" id="teklaFile" accept=".xsr,.txt,.rpt,.lis,.csv,.xls,.xlsx,.xlsm,.docx">
     <button class="tb-btn primary" data-action="print">🖨 Print Requisition</button>
     <span id="cloudPill"></span>
   <div id="cloudPanel" class="cloud-panel hidden"></div>
@@ -216,6 +238,8 @@ table.items-table{width:100%; border-collapse:collapse; font-size:12.5px;}
 <div class="shell" id="shell"></div>
 
 <div id="printArea"></div>
+
+<div id="modalRoot"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
@@ -2689,7 +2713,7 @@ function blankPaintRow(){
   return { id:uid(), item:'', area:'', wastage:10, coats:[ blankPaintCoat('Primer','Epoxy Primer',10,20,true), blankPaintCoat('1st Coat','',10,4,true), blankPaintCoat('2nd Coat','',10,4,false) ] };
 }
 function defaultState(){
-  return { id:uuid(), meta:{ project:'', client:'', location:'', refNo:'', date:todayISO(), preparedBy:'', requestedBy:'', printStock:false, printElementCols:true }, materialGroups:[ blankGroup('ANGLE SECTION') ], paintRows:[ blankPaintRow() ], generalGroups:[ blankGeneralGroup('GENERAL ITEMS') ] };
+  return { id:uuid(), meta:{ project:'', client:'', location:'', refNo:'', date:todayISO(), preparedBy:'', requestedBy:'', printStock:false, printElementCols:true }, materialGroups:[ blankGroup('ANGLE SECTION') ], paintRows:[ blankPaintRow() ], generalGroups:[ blankGeneralGroup('GENERAL ITEMS') ], installerReqs:[] };
 }
 function migrateState(s){
   if(!s || !s.meta) return defaultState();
@@ -2744,6 +2768,18 @@ function migrateState(s){
   });
   if(!s.generalGroups || !s.generalGroups.length) s.generalGroups = [blankGeneralGroup('GENERAL ITEMS')];
   s.generalGroups.forEach(g=>{ if(!g.id) g.id=uid(); (g.rows||[]).forEach(r=>{ if(!r.id) r.id=uid(); if(!r.unit) r.unit='No'; }); if(!g.rows||!g.rows.length) g.rows=[blankGeneralRow()]; });
+  if(!Array.isArray(s.installerReqs)) s.installerReqs = [];
+  s.installerReqs.forEach(q=>{
+    if(!q.id) q.id = uid();
+    if(!Array.isArray(q.rows) || !q.rows.length) q.rows = [blankInstallerRow()];
+    q.rows.forEach(r=>{ if(!r.id) r.id = uid(); if(!r.unit) r.unit = 'Sm'; });
+    if(!Array.isArray(q.deductions)) q.deductions = [];
+    q.deductions.forEach(d=>{ if(!d.id) d.id = uid(); });
+    if(q.retentionPct===undefined) q.retentionPct = '20';
+    if(q.contractOverride===undefined) q.contractOverride = '';
+    if(q.trade===undefined) q.trade = '';
+    if(q.notes===undefined) q.notes = '';
+  });
   return s;
 }
 function loadState(){
@@ -2887,6 +2923,13 @@ function captureFocus(){
     info.sel = '[data-paint="'+el.dataset.paint+'"][data-coat="'+el.dataset.coat+'"][data-cfield="'+el.dataset.cfield+'"]';
   } else if(el.dataset.paint && el.dataset.pfield){
     info.sel = '[data-paint="'+el.dataset.paint+'"][data-pfield="'+el.dataset.pfield+'"]';
+  } else if(el.dataset.ireq && el.dataset.idedn && el.dataset.idfield){
+    info.sel = '[data-ireq="'+el.dataset.ireq+'"][data-idedn="'+el.dataset.idedn+'"][data-idfield="'+el.dataset.idfield+'"]';
+  } else if(el.dataset.irfield){
+    const itr = el.closest('tr[data-ireq]');
+    if(itr) info.sel = 'tr[data-ireq="'+itr.dataset.ireq+'"][data-irow="'+itr.dataset.irow+'"] [data-irfield="'+el.dataset.irfield+'"]';
+  } else if(el.dataset.ireq && el.dataset.ifield){
+    info.sel = '[data-ireq="'+el.dataset.ireq+'"][data-ifield="'+el.dataset.ifield+'"]';
   }
   return info.sel ? info : null;
 }
@@ -2901,7 +2944,8 @@ function restoreFocus(info){
   }catch(e){}
 }
 function rerender(){ const focusInfo=captureFocus(); recalcAllMaterials(); document.getElementById('shell').innerHTML = renderApp(); rerenderCloud(); saveLocalOnly(); restoreFocus(focusInfo); }
-function renderApp(){ return renderMetaCard()+renderMaterialCard()+renderGeneralCard()+renderPaintCard()+rpDr5A77MDGrZBABiXNLkExAbJSbnaUkqJ(); }
+function renderApp(){ return renderMetaCard()+renderMaterialCard()+renderGeneralCard()+renderInstallerCard()+renderPaintCard()+rpDr5A77MDGrZBABiXNLkExAbJSbnaUkqJ(); }
+function rerenderKeep(){ saveLocalOnly(); rerender(); }
 function renderMetaCard(){
   const m = state.meta;
   const f = (key,label,type)=>'<label>'+label+'<input class="f-text" type="'+(type||'text')+'" data-meta="'+key+'" value="'+esc(m[key])+'"></label>';
@@ -2980,11 +3024,686 @@ function rpDr5A77MDGrZBABiXNLkExAbJSbnaUkqJ(){
   return '<div class="card"><div class="card-head"><h2>Paint Procurement Summary</h2><div class="pitch">Auto-generated, kept separate per paint item, aggregated by category/product/can size within each item, 80/20 paint-to-thinner split applied.</div></div><div class="table-scroll"><table class="items-table"><thead><tr><th>Item</th><th>Category</th><th>Product</th><th class="col-sm">Total Liquid (L)</th><th class="col-sm">Paint 80% (L)</th><th class="col-sm">Thinner 20% (L)</th><th class="col-sm">Can Size (L)</th><th class="col-sm">Cans to Order</th></tr></thead><tbody>'+body+'</tbody><tfoot><tr class="sum-row"><td colspan="5" style="text-align:right;">Totals:</td><td class="readout-cell">'+fmt(totalThinner,2)+' L thinner</td><td class="readout-cell">'+THINNER_CAN_L+'L</td><td class="readout-cell">'+fmt(thinnerCans,0)+' thinner cans</td></tr></tfoot></table></div></div>';
 }
 
+/* ==================== INSTALLER / SUBCONTRACTOR PAYMENT REQUISITION ==================== */
+const INST_UNITS = ['Sm','LM','No','Kg','Tonne','Item','L'];
+function instUnitOptions(sel){
+  const v = String(sel||'Sm');
+  const found = INST_UNITS.indexOf(v)>=0 ? v : 'Sm';
+  return INST_UNITS.map(u=>'<option value="'+u+'" '+(u===found?'selected':'')+'>'+u+'</option>').join('');
+}
+function blankInstallerRow(over){ return Object.assign({ id:uid(), desc:'', unit:'Sm', totalQty:'', qtyDone:'', rate:'' }, over||{}); }
+function blankDeduction(label,amount){ return { id:uid(), label:label||'', amount:(amount===undefined?'':String(amount)) }; }
+function blankInstallerReq(name){
+  return { id:uid(), name:name||'', trade:'Steel Erection / Installation', scope:'', date:todayISO(),
+    rows:[blankInstallerRow()],
+    deductions:[ blankDeduction('Less: Payment 1 (advance)',''), blankDeduction('Less: Deductions (materials, damage, etc.)','') ],
+    contractOverride:'', retentionPct:'20', preparedBy:'',
+    notes:'Balance to be paid after the installer completes snags on site.' };
+}
+function instRowCalc(r){
+  const tq=num(r.totalQty), qd=num(r.qtyDone), rate=num(r.rate);
+  return { contract:round4(tq*rate), done:round4(qd*rate), pct:(tq>0?(qd/tq)*100:0) };
+}
+function instReqCalc(q){
+  let lineContract=0, done=0;
+  (q.rows||[]).forEach(r=>{ const c=instRowCalc(r); lineContract+=c.contract; done+=c.done; });
+  const contractSum = num(q.contractOverride) || lineContract;
+  const deductions = (q.deductions||[]).reduce((s,d)=>s+num(d.amount),0);
+  return { lineContract:round2(lineContract), contractSum:round2(contractSum), done:round2(done),
+    deductions:round2(deductions), net:round2(done-deductions),
+    overallPct:(contractSum>0?(done/contractSum)*100:0),
+    retention:round2(contractSum*num(q.retentionPct)/100) };
+}
+function renderInstallerCard(){
+  const reqs = state.installerReqs||[];
+  const blocks = reqs.map((q,qi)=>renderInstallerReq(q,qi)).join('');
+  return '<div class="card"><div class="card-head"><h2>Installer / Subcontractor Payment Requisition</h2>'+
+    '<div class="pitch">Work-done valuation for erection and installation subcontractors. Contract sum auto-totals from Total Qty &times; Rate unless you override it.</div>'+
+    '<div class="spacer"></div><button class="btn btn-add" data-action="add-installer">+ Add Installer</button></div>'+
+    (blocks || '<div class="empty-row">No installer requisitions yet. Add one to begin.</div>')+'</div>';
+}
+function renderInstallerReq(q,qi){
+  const c = instReqCalc(q);
+  const rows = (q.rows||[]).map((r,ri)=>{
+    const rc = instRowCalc(r);
+    return '<tr data-ireq="'+q.id+'" data-irow="'+ri+'">'+
+      '<td class="num-col">'+(ri+1)+'</td>'+
+      '<td class="desc-col"><input class="f-text" data-irfield="desc" value="'+esc(r.desc)+'" placeholder="e.g. Erection of roof trusses"></td>'+
+      '<td class="col-unit"><select class="f-select" data-irfield="unit">'+instUnitOptions(r.unit)+'</select></td>'+
+      '<td class="col-sm"><input class="f-num" data-irfield="totalQty" value="'+esc(r.totalQty)+'" placeholder="0"></td>'+
+      '<td class="col-sm"><input class="f-num" data-irfield="qtyDone" value="'+esc(r.qtyDone)+'" placeholder="0"></td>'+
+      '<td class="col-sm"><input class="f-num" data-irfield="rate" value="'+esc(r.rate)+'" placeholder="0"></td>'+
+      '<td><span class="readout-cell">'+(rc.pct?fmt(rc.pct,1)+'%':'-')+'</span></td>'+
+      '<td><span class="readout-cell">'+(rc.contract?fmt(rc.contract,2):'-')+'</span></td>'+
+      '<td><span class="readout-cell">'+(rc.done?fmt(rc.done,2):'-')+'</span></td>'+
+      '<td class="rm-col"><button class="btn-icon" data-action="remove-installer-row" data-ireq="'+q.id+'" data-irow="'+ri+'" title="Remove line">&times;</button></td></tr>';
+  }).join('');
+  const dedRows = (q.deductions||[]).map(d=>
+    '<tr><td class="desc-col"><input class="f-text" data-ireq="'+q.id+'" data-idedn="'+d.id+'" data-idfield="label" value="'+esc(d.label)+'" placeholder="e.g. Less: Payment 2"></td>'+
+    '<td class="col-md"><input class="f-num" data-ireq="'+q.id+'" data-idedn="'+d.id+'" data-idfield="amount" value="'+esc(d.amount)+'" placeholder="0"></td>'+
+    '<td class="rm-col"><button class="btn-icon" data-action="remove-deduction" data-ireq="'+q.id+'" data-dedn="'+d.id+'" title="Remove">&times;</button></td></tr>').join('');
+  const f=(key,label,type,ph)=>'<label>'+label+'<input class="f-text" type="'+(type||'text')+'" data-ireq="'+q.id+'" data-ifield="'+key+'" value="'+esc(q[key])+'" placeholder="'+esc(ph||'')+'"></label>';
+  return '<div class="group-block" data-ireqblock="'+q.id+'">'+
+    '<div class="group-head"><input class="f-text group-name" data-ireq="'+q.id+'" data-ifield="name" value="'+esc(q.name)+'" placeholder="INSTALLER / SUBCONTRACTOR NAME" style="text-transform:uppercase;">'+
+    '<div class="spacer"></div><button class="btn btn-add" data-action="add-installer-row" data-ireq="'+q.id+'">+ Line</button>'+
+    '<button class="btn btn-ghost" data-action="remove-installer" data-ireq="'+q.id+'">Remove Installer</button></div>'+
+    '<div class="meta-grid" style="margin:6px 0 8px;">'+f('trade','Trade / Discipline','text','Steel Erection')+f('scope','Scope of Work','text','e.g. Erection of main building steelwork')+f('date','Date of Requisition','date')+f('preparedBy','Prepared By','text','Name')+'</div>'+
+    '<div class="table-scroll"><table class="items-table"><thead><tr>'+
+      '<th class="num-col">No</th><th class="desc-col">Description of Work</th><th class="col-unit">Unit</th>'+
+      '<th class="col-sm">Total Qty</th><th class="col-sm">Qty Done</th><th class="col-sm">Rate (Ksh)</th>'+
+      '<th class="col-sm">% Done</th><th class="col-md">Line Value (Ksh)</th><th class="col-md">Value Done (Ksh)</th><th class="rm-col"></th>'+
+    '</tr></thead><tbody>'+rows+'</tbody></table></div>'+
+    '<div style="display:flex; gap:14px; flex-wrap:wrap; margin-top:8px; align-items:flex-start;">'+
+      '<div style="flex:1 1 320px; min-width:280px;">'+
+        '<div class="group-total" style="font-size:12px; margin-bottom:4px;">Payment Calculation</div>'+
+        '<div class="table-scroll"><table class="items-table"><tbody>'+
+          '<tr><td class="desc-col"><b>A &nbsp; Contract Sum</b><div class="cp-hint">Auto: '+fmt(c.lineContract,2)+' &mdash; leave override blank to use it</div></td>'+
+            '<td class="col-md"><input class="f-num" data-ireq="'+q.id+'" data-ifield="contractOverride" value="'+esc(q.contractOverride)+'" placeholder="'+fmt(c.lineContract,2)+'"></td><td class="rm-col"></td></tr>'+
+          '<tr><td class="desc-col"><b>B &nbsp; Total Value of Work Done (this requisition)</b><div class="cp-hint">'+fmt(c.overallPct,1)+'% of contract sum</div></td>'+
+            '<td class="col-md"><span class="readout-cell">'+fmt(c.done,2)+'</span></td><td class="rm-col"></td></tr>'+
+          dedRows+
+          '<tr class="sum-row"><td class="desc-col"><b>NET AMOUNT PAYABLE</b></td><td class="col-md"><span class="readout-cell"><b>'+fmt(c.net,2)+'</b></span></td><td class="rm-col"></td></tr>'+
+        '</tbody></table></div>'+
+        '<button class="btn btn-add" data-action="add-deduction" data-ireq="'+q.id+'" style="margin-top:6px;">+ Deduction / Previous Payment</button>'+
+      '</div>'+
+      '<div style="flex:1 1 260px; min-width:240px;">'+
+        '<div class="group-total" style="font-size:12px; margin-bottom:4px;">Retention / Balance</div>'+
+        '<label style="display:block; font-size:10.5px; color:var(--steel); font-weight:600;">Retention %<input class="f-num" data-ireq="'+q.id+'" data-ifield="retentionPct" value="'+esc(q.retentionPct)+'" placeholder="20"></label>'+
+        '<div class="group-total" style="margin-top:6px;">Retained: <b>Ksh '+fmt(c.retention,2)+'</b></div>'+
+        '<label style="display:block; font-size:10.5px; color:var(--steel); font-weight:600; margin-top:6px;">Note<input class="f-text" data-ireq="'+q.id+'" data-ifield="notes" value="'+esc(q.notes)+'"></label>'+
+      '</div>'+
+    '</div>'+
+  '</div>';
+}
+
+/* ==================== TEKLA MATERIAL LIST IMPORT ==================== */
+function catItems(k){ return (CATALOG[k] && CATALOG[k].items) || []; }
+function pickByT(key, sizePred, t){
+  const items = catItems(key);
+  const cands = items.map((it,i)=>({it,i})).filter(x=>sizePred(String(x.it.size)));
+  if(!cands.length) return -1;
+  if(t===undefined || t===null || !isFinite(t) || !t) return cands[0].i;
+  let best=cands[0], bd=Math.abs(num(cands[0].it.t)-t);
+  cands.forEach(c=>{ const d=Math.abs(num(c.it.t)-t); if(d<bd){ bd=d; best=c; } });
+  return bd<=0.35 ? best.i : -1;
+}
+function classifyProfile(raw){
+  const s = String(raw||'').replace(/\s+/g,'').toUpperCase();
+  const N='([0-9]+(?:\\.[0-9]+)?)', X='[*xX]';
+  const R=(p)=>new RegExp(p);
+  let m;
+  if(m = s.match(R('^(?:PLT|PL)'+N+X+N+'$')))   return {kind:'plate', category:'plates', sizeIdx:-1, t:num(m[1]), w:num(m[2]), label:'PLATES'};
+  if(m = s.match(R('^(?:PLT|PL)'+N+'$')))        return {kind:'plate', category:'plates', sizeIdx:-1, t:num(m[1]), w:0, label:'PLATES'};
+  if(m = s.match(R('^(?:FL|FLT|FB)'+N+X+N+'$'))){
+    const t=num(m[1]), w=num(m[2]);
+    return {kind:'plate', fromFL:true, category:'plates', sizeIdx:-1, t:t, w:w, label:'PLATES',
+      flatSizeIdx:pickByT('Flats', sz=>sz.toLowerCase().indexOf(w+'x')===0, t)};
+  }
+  if(m = s.match(R('^CHS'+N+X+N+'$')))
+    return {kind:'section', category:'CHS', sizeIdx:pickByT('CHS', sz=>num(sz)===num(m[1]), num(m[2])), label:'CHS'};
+  if(m = s.match(R('^(SHS|RHS)'+N+X+N+X+N+'$'))){
+    const key=m[1], a=num(m[2]), b=num(m[3]), t=num(m[4]);
+    return {kind:'section', category:key, sizeIdx:pickByT(key, sz=>sz===(a+'x'+b)||sz===(b+'x'+a), t), label:key+' SECTIONS'};
+  }
+  if(m = s.match(R('^SHS'+N+X+N+'$'))){
+    const a=num(m[1]), t=num(m[2]);
+    return {kind:'section', category:'SHS', sizeIdx:pickByT('SHS', sz=>sz===(a+'x'+a), t), label:'SHS SECTIONS'};
+  }
+  if(m = s.match(/^IPEAA([0-9]+)/))
+    return {kind:'section', category:'IPE', label:'IPE SECTIONS',
+      sizeIdx:catItems('IPE').findIndex(it=>String(it.size).replace(/\s+/g,'').toUpperCase().indexOf('IPEAA'+m[1])===0)};
+  if(m = s.match(/^IPE([0-9]+)/))
+    return {kind:'section', category:'IPE', label:'IPE SECTIONS',
+      sizeIdx:catItems('IPE').findIndex(it=>{ const z=String(it.size).replace(/\s+/g,'').toUpperCase(); return z.indexOf('IPE'+m[1])===0 && z.indexOf('IPEAA')!==0; })};
+  if(m = s.match(R('^(UB|UC)'+N+'(?:'+X+N+')?(?:'+X+N+')?$'))){
+    const key=m[1], parts=[m[2],m[3],m[4]].filter(Boolean).map(v=>String(num(v)));
+    return {kind:'section', category:key, label:key+' SECTIONS',
+      sizeIdx:catItems(key).findIndex(it=>{ const nums=String(it.size).match(/[0-9.]+/g)||[]; return parts.every((v,i)=>nums[i]===v); })};
+  }
+  if(m = s.match(R('^(?:ROD|RB)'+N+'$')))
+    return {kind:'section', category:'R BArs', label:'ROUND BARS', sizeIdx:catItems('R BArs').findIndex(it=>num(it.size)===num(m[1]))};
+  if(m = s.match(R('^(?:L|EA|UA)'+N+X+N+X+N+'$'))){
+    const a=num(m[1]), b=num(m[2]), t=num(m[3]);
+    const key = (a===b) ? 'EQ A' : 'UEQ A';
+    return {kind:'section', category:key, label:'ANGLE SECTIONS', sizeIdx:pickByT(key, sz=>sz===(a+'x'+b)||sz===(b+'x'+a), t)};
+  }
+  // Cold-formed purlins: CFLC100*50*20*2.0, CFC100*..., C100, CFLZ150*..., Z150
+  const segs = s.split(/[*xX]/);
+  const segT = (segs.length>1 && isNumStr(segs[segs.length-1])) ? num(segs[segs.length-1]) : 0;
+  if(m = segs[0].match(/^(?:CFLC|CFC|CFU|C)([0-9]+)$/))
+    return {kind:'section', category:'Cee', label:'CEE PURLINS', t:segT,
+      sizeIdx:pickByT('Cee', sz=>sz.toUpperCase()==='C'+m[1] || sz.toUpperCase().indexOf('C'+m[1]+'X')===0, segT)};
+  if(m = segs[0].match(/^(?:CFLZ|CFZ|Z)([0-9]+)$/))
+    return {kind:'section', category:'Zed', label:'ZED PURLINS', t:segT,
+      sizeIdx:pickByT('Zed', sz=>sz.toUpperCase()==='Z'+m[1] || sz.toUpperCase().indexOf('Z'+m[1]+'X')===0, segT)};
+  // Folded sheet items: "610 -  GUTTER GALV ***" -> girth 610 mm, thickness derived from mass
+  const gm = String(raw).match(/^\s*([0-9]+(?:\.[0-9]+)?)/);
+  if(gm && /GUTTER|FLASHING|RIDGE|CAPPING|BARGE|VALLEY|APRON|CLADD|SHEET/i.test(String(raw)))
+    return {kind:'plate', fromSheet:true, category:'plates', sizeIdx:-1, t:0, w:num(gm[1]),
+      finish:(/GALV/i.test(String(raw))?'GALV':''), label:'FOLDED SHEET ITEMS'};
+  return {kind:'other', category:'', sizeIdx:-1, label:'UNMATCHED / OTHER ITEMS'};
+}
+/* Snap a derived thickness to the nearest sheet thickness in the catalog. */
+function sheetThicknesses(){
+  const ts = catItems('plates').map(it=>{ const m=String(it.size).match(/x\s*([0-9.]+)\s*mm/i); return m?num(m[1]):0; }).filter(Boolean);
+  return ts.sort((a,b)=>a-b);
+}
+function snapThickness(t){
+  const ts = sheetThicknesses();
+  if(!t || !ts.length) return round4(t);
+  let best=ts[0], bd=Math.abs(ts[0]-t);
+  ts.forEach(x=>{ const d=Math.abs(x-t); if(d<bd){ bd=d; best=x; } });
+  return best;
+}
+
+/* ---------- parsers ---------- */
+function isNumStr(v){ return /^[0-9]+(\.[0-9]+)?$/.test(String(v).trim()); }
+function parseTeklaText(text){
+  const lines = String(text).replace(/\r/g,'').split(/[\f\n]/);
+  const meta = { title:'', project:'', projectNo:'', phase:'', date:'' };
+  const details=[], totals={}; let lastProfile=null, grand=null;
+  let profWidth=30, seenHeader=false; const pre=[];
+  for(let i=0;i<lines.length;i++){
+    const line = lines[i].replace(/\s+$/,'');
+    if(!line.trim()) continue;
+    if(/^-+$/.test(line.trim())) continue;
+    if(/^\s*Profile\s/i.test(line) && /Length/i.test(line)){ profWidth = line.search(/Length/i); seenHeader=true; continue; }
+    const pg = line.match(/^(.*?)\s{2,}Page\s+\d+\s*$/i);
+    if(pg){ if(!meta.project) meta.project = pg[1].trim(); if(!meta.phase && pre.length) meta.phase = pre[pre.length-1]; continue; }
+    const dt = line.match(/^(\S+)?\s+Date\s+([0-9.\/-]+)/i);
+    if(dt){ if(!meta.projectNo && dt[1]) meta.projectNo = dt[1]; if(!meta.date) meta.date = dt[2]; continue; }
+    const gt = line.match(/Total of\s+([0-9]+)\s+parts.*?mass of\s+([0-9.]+)\s*kg/i);
+    if(gt){ grand = { parts:num(gt[1]), mass:num(gt[2]) }; continue; }
+    if(!seenHeader){ pre.push(line.trim()); if(!meta.title) meta.title = line.trim(); continue; }
+    if(/profile\s+total/i.test(line)){
+      const t = line.split(/profile\s+total/i)[1].trim().split(/\s+/).map(num);
+      if(lastProfile && t.length>=2){
+        const tt = totals[lastProfile] || (totals[lastProfile]={len:0,no:0,area:0,mass:0});
+        tt.len+=t[0]; tt.no+=t[1];
+        if(t.length>=4){ tt.area+=t[2]; tt.mass+=t[3]; } else if(t.length===3){ tt.mass+=t[2]; }
+      }
+      continue;
+    }
+    let profile = line.slice(0,profWidth).trim();
+    let rest = line.slice(profWidth).trim().split(/\s+/);
+    if(!profile || rest.length<3 || !isNumStr(rest[0]) || !isNumStr(rest[1])){
+      const fb = line.match(/^(.*?\S)\s{2,}([0-9]+(?:\.[0-9]+)?)\s+([0-9]+)\s+(.*)$/);
+      if(!fb) continue;
+      profile = fb[1].trim();
+      rest = [fb[2], fb[3]].concat(fb[4].trim().split(/\s+/));
+      if(rest.length<3) continue;
+    }
+    const length=num(rest[0]), no=num(rest[1]);
+    if(!length || !no) continue;
+    const mass = num(rest[rest.length-1]);
+    const area = rest.length>=5 ? num(rest[rest.length-2]) : 0;
+    const material = rest.length>=4 ? rest[2] : '';
+    details.push({ profile, length, no, material, area, mass });
+    lastProfile = profile;
+  }
+  return { meta, details, totals, grand, ok:details.length>0 };
+}
+function parseTeklaAOA(aoa){
+  const pats = { profile:/profile|section|part\s*name|shape/i, length:/length/i,
+    no:/^(no|nos|qty|quantity|pcs|pieces|count)\.?$/i, material:/material|grade/i,
+    mass:/mass|weight/i, area:/area/i };
+  const details=[], totals={}; let lastProfile=null, map=null;
+  for(const row of (aoa||[])){
+    if(!row || !row.length) continue;
+    const cells = row.map(c=>String(c===undefined||c===null?'':c).trim());
+    if(!map){
+      const cand={};
+      cells.forEach((c,i)=>{ Object.keys(pats).forEach(k=>{ if(cand[k]===undefined && c && pats[k].test(c)) cand[k]=i; }); });
+      if(cand.profile!==undefined && cand.length!==undefined && cand.no!==undefined) map=cand;
+      continue;
+    }
+    const prof = cells[map.profile]||'';
+    if(/total/i.test(prof) || /total of/i.test(cells[0]||'')){
+      if(lastProfile){
+        const tt = totals[lastProfile] || (totals[lastProfile]={len:0,no:0,area:0,mass:0});
+        tt.len+=num(cells[map.length]); tt.no+=num(cells[map.no]);
+        if(map.mass!==undefined) tt.mass+=num(cells[map.mass]);
+        if(map.area!==undefined) tt.area+=num(cells[map.area]);
+      }
+      continue;
+    }
+    if(!prof) continue;
+    const length=num(cells[map.length]), no=num(cells[map.no]);
+    if(!length || !no) continue;
+    details.push({ profile:prof, length, no,
+      material: map.material!==undefined?cells[map.material]:'',
+      area: map.area!==undefined?num(cells[map.area]):0,
+      mass: map.mass!==undefined?num(cells[map.mass]):0 });
+    lastProfile = prof;
+  }
+  return { meta:{title:'',project:'',projectNo:'',phase:'',date:''}, details, totals, grand:null, ok:!!map && details.length>0 };
+}
+function xmlUnescape(s){
+  return String(s).replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"')
+    .replace(/&apos;/g,"'").replace(/&#39;/g,"'").replace(/&amp;/g,'&');
+}
+async function unzipEntry(buf, name){
+  const dv = new DataView(buf), u8 = new Uint8Array(buf);
+  let eocd=-1;
+  for(let i=u8.length-22; i>=Math.max(0,u8.length-66000); i--){ if(dv.getUint32(i,true)===0x06054b50){ eocd=i; break; } }
+  if(eocd<0) throw new Error('That file is not a readable .docx (zip) package.');
+  const count = dv.getUint16(eocd+10,true);
+  let off = dv.getUint32(eocd+16,true);
+  for(let n=0;n<count;n++){
+    if(dv.getUint32(off,true)!==0x02014b50) throw new Error('The .docx central directory is corrupt.');
+    const method  = dv.getUint16(off+10,true);
+    const compSz  = dv.getUint32(off+20,true);
+    const fnLen   = dv.getUint16(off+28,true);
+    const exLen   = dv.getUint16(off+30,true);
+    const cmLen   = dv.getUint16(off+32,true);
+    const lho     = dv.getUint32(off+42,true);
+    const fn = new TextDecoder().decode(u8.subarray(off+46, off+46+fnLen));
+    if(fn===name){
+      const lfn = dv.getUint16(lho+26,true), lex = dv.getUint16(lho+28,true);
+      const start = lho+30+lfn+lex;
+      const raw = u8.subarray(start, start+compSz);
+      if(method===0) return new TextDecoder().decode(raw);
+      if(method!==8) throw new Error('Unsupported compression inside the .docx.');
+      if(typeof DecompressionStream==='undefined')
+        throw new Error('This browser cannot unzip .docx. Save the Tekla report as .xsr, .txt or .xlsx instead.');
+      const stream = new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+      return await new Response(stream).text();
+    }
+    off += 46+fnLen+exLen+cmLen;
+  }
+  throw new Error('word/document.xml was not found inside that .docx.');
+}
+function docxToAOA(xml){
+  const aoa=[];
+  (xml.match(/<w:tbl[\s>][\s\S]*?<\/w:tbl>/g)||[]).forEach(tb=>{
+    (tb.match(/<w:tr[\s>][\s\S]*?<\/w:tr>/g)||[]).forEach(tr=>{
+      const tcs = tr.match(/<w:tc[\s>][\s\S]*?<\/w:tc>/g)||[];
+      aoa.push(tcs.map(tc=>{
+        const ts = tc.match(/<w:t[^>]*>[\s\S]*?<\/w:t>/g)||[];
+        return xmlUnescape(ts.map(t=>t.replace(/<[^>]+>/g,'')).join('')).trim();
+      }));
+    });
+  });
+  return aoa;
+}
+function docxToText(xml){
+  return (xml.match(/<w:p[\s>][\s\S]*?<\/w:p>/g)||[]).map(p=>{
+    const ts = p.match(/<w:t[^>]*>[\s\S]*?<\/w:t>/g)||[];
+    return xmlUnescape(ts.map(t=>t.replace(/<[^>]+>/g,'')).join(''));
+  }).join('\n');
+}
+
+/* ---------- import model ---------- */
+function buildImportModel(parsed){
+  const by={};
+  parsed.details.forEach(d=>{
+    const g = by[d.profile] || (by[d.profile] = { profile:d.profile, material:d.material||'', cuts:[], pcs:0, lenMM:0, mass:0 });
+    g.cuts.push({ length:d.length, no:d.no, mass:d.mass });
+    g.pcs += d.no; g.lenMM += d.length*d.no; g.mass += d.mass*d.no;
+    if(!g.material && d.material) g.material = d.material;
+  });
+  return Object.keys(by).map(k=>{
+    const g = by[k], t = parsed.totals[k];
+    if(t && t.mass){ g.mass = t.mass; if(t.len) g.lenMM = t.len; if(t.no) g.pcs = t.no; }
+    g.cls = classifyProfile(k);
+    g.kgPerMDerived = g.lenMM ? round4(g.mass/(g.lenMM/1000)) : 0;
+    if(g.cls.fromSheet && g.cls.w && g.lenMM){
+      g.areaM2 = round4((g.lenMM/1000)*(g.cls.w/1000));
+      g.cls.tRaw = g.areaM2 ? round4((g.mass/g.areaM2)/DENSITY*1000) : 0;
+      g.cls.t = snapThickness(g.cls.tRaw);
+      g.plateMass = round4(g.areaM2*(g.cls.t/1000)*DENSITY);
+    }
+    g.include = true;
+    g.stdLength = '6';
+    return g;
+  }).sort((a,b)=>b.mass-a.mass);
+}
+/* Resolve a group to its effective treatment under the current options. */
+function resolve(g){
+  const c = g.cls;
+  const flAsPlate = !imp || !imp.opts || imp.opts.flAsPlate===undefined || String(imp.opts.flAsPlate)!=='false';
+  if(c.kind==='plate' && c.fromFL && !flAsPlate){
+    const item = (c.flatSizeIdx>=0) ? catItems('Flats')[c.flatSizeIdx] : null;
+    return { kind:'section', category:'Flats', sizeIdx:c.flatSizeIdx, label:'FLAT BARS', t:c.t, w:c.w,
+      matched:!!item, catalogName:item?item.size:'', kgPerM:(item&&item.kgPerM)?num(item.kgPerM):g.kgPerMDerived };
+  }
+  if(c.kind==='plate')
+    return { kind:'plate', category:'plates', sizeIdx:-1, label:c.label||'PLATES', t:c.t, w:c.w,
+      finish:c.finish||'', fromSheet:!!c.fromSheet, tRaw:c.tRaw||0, matched:false, catalogName:'', kgPerM:0 };
+  if(c.kind==='other')
+    return { kind:'other', category:'', sizeIdx:-1, label:c.label, matched:false, catalogName:'', kgPerM:0 };
+  const item = (c.sizeIdx>=0) ? catItems(c.category)[c.sizeIdx] : null;
+  return { kind:'section', category:c.category, sizeIdx:c.sizeIdx, label:c.label,
+    matched:!!item, catalogName:item?item.size:'', kgPerM:(item&&item.kgPerM)?num(item.kgPerM):g.kgPerMDerived };
+}
+/* Pool every plate/FL profile by thickness, then convert pooled mass -> sheets. */
+function plateBuckets(){
+  const o = imp.opts;
+  const sheetL = num(o.sheetL)||1220, sheetW = num(o.sheetW)||2440, waste = num(o.wastage)||0;
+  const b = {};
+  imp.groups.filter(g=>g.include).forEach(g=>{
+    const r = resolve(g);
+    if(r.kind!=='plate') return;
+    const t = r.t || 0, finish = r.finish || '';
+    const key = t+'|'+finish;
+    const x = b[key] || (b[key] = { t:t, finish:finish, pcs:0, mass:0, area:0, profiles:[] });
+    x.pcs += g.pcs;
+    // folded sheet: bill the mass of plate actually consumed at the snapped thickness
+    x.mass += (r.fromSheet && g.plateMass) ? g.plateMass : g.mass;
+    if(r.fromSheet && g.areaM2) x.area += g.areaM2;
+    else if(r.w) g.cuts.forEach(c=>{ x.area += (c.length/1000)*(r.w/1000)*c.no; });
+    x.profiles.push(g.profile);
+  });
+  return Object.keys(b).map(k=>{
+    const x = b[k];
+    const base = sheetL+'x'+sheetW+'x'+x.t+'mm plate';
+    x.sizeStr = base + (x.finish ? ' ('+x.finish+')' : '');
+    // a galvanised sheet is not the same stock item as a black plate - never match it to the catalog
+    const idx = x.finish ? -1 : catItems('plates').findIndex(it=>String(it.size).toLowerCase()===base.toLowerCase());
+    const item = idx>=0 ? catItems('plates')[idx] : null;
+    x.sheetIdx = idx;
+    x.kgPerPc = (item && item.kgPerPc) ? num(item.kgPerPc) : plateKgPerPc(sheetL, sheetW, x.t);
+    x.grossMass = x.mass*(1+waste/100);
+    x.sheets = x.kgPerPc ? ceilSafe(x.grossMass/x.kgPerPc) : 0;
+    x.orderMass = round4(x.sheets*x.kgPerPc);
+    return x;
+  }).sort((a,c)=>(c.t-a.t) || String(a.finish).localeCompare(String(c.finish)));
+}
+function impBars(g, std){
+  const s = num(std)||6;
+  let cut=0;
+  g.cuts.forEach(c=>{ const tl=(c.length/1000)*c.no; cut += ceilSafe(tl/s); });
+  const pooled = ceilSafe((g.lenMM/1000)/s);
+  return { cut, pooled };
+}
+
+
+let imp = null;
+async function handleTeklaFile(file){
+  imp = { loading:true, error:'', groups:[], meta:{}, opts:{}, fileName:file.name };
+  renderImportModal();
+  try{
+    const name = file.name.toLowerCase();
+    let parsed = null;
+    if(/\.(xlsx|xlsm|xls|csv)$/.test(name)){
+      if(typeof XLSX==='undefined') throw new Error('The Excel library did not load. Check your connection and reload.');
+      const wb = XLSX.read(await file.arrayBuffer(), {type:'array'});
+      for(const sn of wb.SheetNames){
+        const aoa = XLSX.utils.sheet_to_json(wb.Sheets[sn], {header:1, blankrows:false, defval:''});
+        const p = parseTeklaAOA(aoa);
+        if(p.ok){ parsed=p; break; }
+      }
+      if(!parsed) throw new Error('No Profile / Length / No header row was found in that spreadsheet.');
+    } else if(/\.docx$/.test(name)){
+      const xml = await unzipEntry(await file.arrayBuffer(), 'word/document.xml');
+      const aoa = docxToAOA(xml);
+      let p = aoa.length ? parseTeklaAOA(aoa) : { ok:false, details:[] };
+      if(!p.ok) p = parseTeklaText(docxToText(xml));
+      if(!p.details.length) throw new Error('No material rows were recognised in that Word document.');
+      parsed = p;
+    } else if(/\.doc$/.test(name)){
+      throw new Error('Legacy .doc is not supported. Save it as .docx, or export the Tekla report as .xsr / .txt / .xlsx.');
+    } else {
+      parsed = parseTeklaText(await file.text());
+      if(!parsed.details.length) throw new Error('No material rows were recognised in that report.');
+    }
+    imp = { loading:false, error:'', fileName:file.name, meta:parsed.meta||{}, grand:parsed.grand||null,
+      groups: buildImportModel(parsed),
+      opts:{ plateMode:'sheets', flAsPlate:'true', sheetL:'1220', sheetW:'2440', wastage:'15', detailMode:'cut',
+             grouping:'category', prefixPhase:false, stdLength:'6', replace:false } };
+  }catch(err){
+    imp = { loading:false, error:(err && err.message) || String(err), groups:[], meta:{}, opts:{}, fileName:file.name };
+  }
+  renderImportModal();
+}
+
+/* ---------- import modal ---------- */
+function impTotals(){
+  const sel = imp.groups.filter(g=>g.include);
+  return { n:sel.length, pcs:sel.reduce((s,g)=>s+g.pcs,0), mass:sel.reduce((s,g)=>s+g.mass,0) };
+}
+function renderImportModal(){
+  const root = document.getElementById('modalRoot');
+  if(!imp){ root.innerHTML=''; return; }
+  if(imp.loading){ root.innerHTML = '<div class="modal-back"><div class="modal-card"><div class="modal-body"><div class="empty-row">Reading '+esc(imp.fileName)+'&hellip;</div></div></div></div>'; return; }
+  if(imp.error){
+    root.innerHTML = '<div class="modal-back"><div class="modal-card"><div class="modal-head"><h2>Tekla Import</h2><div class="spacer"></div>'+
+      '<button class="btn btn-ghost" data-impaction="close">Close</button></div>'+
+      '<div class="modal-body"><div class="cp-error">'+esc(imp.error)+'</div>'+
+      '<div class="cp-hint">Supported: Tekla report text (.xsr, .txt, .rpt, .lis), Excel (.xlsx, .xls, .csv) and Word (.docx). The report needs a Profile / Length / No header.</div></div></div></div>';
+    return;
+  }
+  const o = imp.opts, t = impTotals();
+  const m = imp.meta||{};
+  const metaLine = [ m.project&&('Project: '+m.project), m.projectNo&&('No: '+m.projectNo), m.phase&&('Phase: '+m.phase), m.date&&('Date: '+m.date) ].filter(Boolean).map(esc).join(' &nbsp;|&nbsp; ');
+  const rows = imp.groups.map((g,i)=>{
+    const rv = resolve(g);
+    const b = impBars(g, g.stdLength||o.stdLength);
+    const isPlate = rv.kind==='plate', isOther = rv.kind==='other';
+    const delta = (rv.matched && g.kgPerMDerived && rv.kgPerM) ? ((rv.kgPerM-g.kgPerMDerived)/g.kgPerMDerived)*100 : 0;
+    const target = isOther ? '<span class="readout-cell">General item</span>'
+      : isPlate ? '<span class="readout-cell">pooled &rarr; '+esc(rv.t)+'mm'+(rv.finish?' '+esc(rv.finish):'')+' sheets</span>'+
+          (rv.fromSheet ? '<div class="cp-hint">'+esc(rv.w)+'mm girth, t&asymp;'+fmt(rv.tRaw,2)+'mm</div>' : '')
+      : '<span class="readout-cell">'+esc(rv.matched ? rv.catalogName : 'Custom')+'</span>';
+    return '<tr>'+
+      '<td class="num-col"><input type="checkbox" data-impgi="'+i+'" data-impfield="include" '+(g.include?'checked':'')+'></td>'+
+      '<td class="desc-col"><b>'+esc(g.profile)+'</b><div class="cp-hint">'+esc(rv.label)+(g.material?' &middot; '+esc(g.material):'')+' &middot; '+g.cuts.length+' cut length'+(g.cuts.length>1?'s':'')+'</div></td>'+
+      '<td>'+target+'</td>'+
+      '<td><span class="readout-cell">'+fmt(g.pcs,0)+'</span></td>'+
+      '<td><span class="readout-cell">'+fmt(g.lenMM/1000,2)+'</span></td>'+
+      '<td><span class="readout-cell">'+fmt(g.mass,1)+'</span></td>'+
+      '<td>'+(isPlate||isOther ? '<span class="readout-cell">-</span>'
+        : '<span class="readout-cell">'+(rv.kgPerM?fmt(rv.kgPerM,3):'-')+'</span>'+
+          (rv.matched
+            ? (Math.abs(delta)>2 ? '<div class="cp-hint" style="color:var(--danger);">catalog vs Tekla '+(delta>0?'+':'')+fmt(delta,1)+'%</div>' : '')
+            : '<div class="cp-hint">derived from Tekla</div>'))+'</td>'+
+      '<td>'+(isPlate||isOther ? '<span class="readout-cell">-</span>' : '<input class="m-num" data-impgi="'+i+'" data-impfield="stdLength" value="'+esc(g.stdLength)+'">')+'</td>'+
+      '<td><span class="readout-cell">'+(isPlate||isOther ? '-' : b.cut+' / '+b.pooled)+'</span></td>'+
+    '</tr>';
+  }).join('');
+  const sel=(key,opts)=>'<select class="m-select" data-impopt="'+key+'">'+opts.map(x=>'<option value="'+x[0]+'" '+(String(o[key])===x[0]?'selected':'')+'>'+x[1]+'</option>').join('')+'</select>';
+  root.innerHTML =
+  '<div class="modal-back"><div class="modal-card">'+
+    '<div class="modal-head"><h2>Import Tekla Material List</h2><div class="spacer"></div><button class="btn btn-ghost" data-impaction="close">Cancel</button></div>'+
+    '<div class="modal-body">'+
+      '<div class="cp-hint" style="margin-bottom:8px;">'+esc(imp.fileName)+(metaLine?' &nbsp;&mdash;&nbsp; '+metaLine:'')+
+        (imp.grand?' &nbsp;&mdash;&nbsp; report total: '+fmt(imp.grand.parts,0)+' parts, '+fmt(imp.grand.mass,1)+' kg':'')+'</div>'+
+      '<div class="imp-opts">'+
+        '<label>Group rows by'+sel('grouping',[['category','Section category'],['profile','One group per profile'],['single','Single group']])+'</label>'+
+        '<label>Section rows'+sel('detailMode',[['cut','One row per cut length'],['profile','One row per profile (total length)']])+'</label>'+
+        '<label>Plate handling'+sel('plateMode',[['sheets','Pool by thickness &rarr; sheets'],['pieces','Keep piece-level rows']])+'</label>'+
+        '<label>FL profiles'+sel('flAsPlate',[['true','Plate strips (pool with PLT)'],['false','Flat bar stock']])+'</label>'+
+        '<label>Default std length (m)<input class="m-num" data-impopt="stdLength" value="'+esc(o.stdLength)+'"></label>'+
+        '<label>Sheet L (mm)<input class="m-num" data-impopt="sheetL" value="'+esc(o.sheetL)+'"></label>'+
+        '<label>Sheet W (mm)<input class="m-num" data-impopt="sheetW" value="'+esc(o.sheetW)+'"></label>'+
+        '<label>Nesting allowance %<input class="m-num" data-impopt="wastage" value="'+esc(o.wastage)+'"></label>'+
+        '<label class="inline-chk"><input type="checkbox" data-impopt="prefixPhase" '+(o.prefixPhase?'checked':'')+'> Prefix group names with phase</label>'+
+        '<label class="inline-chk"><input type="checkbox" data-impopt="replace" '+(o.replace?'checked':'')+'> Replace existing material groups</label>'+
+      '</div>'+
+      '<div class="table-scroll" style="max-height:44vh; margin-top:8px;"><table class="items-table"><thead><tr>'+
+        '<th class="num-col"><input type="checkbox" data-impaction="toggle-all" '+(imp.groups.every(g=>g.include)?'checked':'')+'></th>'+
+        '<th class="desc-col">Profile</th><th>Catalog match</th><th>Pcs</th><th>Total Len (m)</th><th>Mass (kg)</th><th>kg/m</th><th class="col-sm">Std (m)</th><th>Bars cut/pooled</th>'+
+      '</tr></thead><tbody>'+rows+'</tbody></table></div>'+
+      plateBucketHTML()+
+      '<div id="impSummary" class="group-total" style="margin-top:8px;">'+impSummaryHTML()+'</div>'+
+      '<div class="cp-hint" style="margin-top:6px;">&ldquo;Bars cut/pooled&rdquo; compares ordering each cut length separately (over-orders) against pooling the whole profile into stock bars (assumes perfect nesting). The true figure sits between the two.</div>'+
+    '</div>'+
+    '<div class="modal-foot"><button class="btn btn-ghost" data-impaction="close">Cancel</button><div class="spacer"></div>'+
+      '<button class="btn btn-add" data-impaction="apply">Insert '+t.n+' profile'+(t.n===1?'':'s')+' into requisition</button></div>'+
+  '</div></div>';
+}
+function plateBucketHTML(){
+  if(String(imp.opts.plateMode)!=='sheets') return '';
+  const bs = plateBuckets();
+  if(!bs.length) return '';
+  const rows = bs.map(x=>'<tr><td class="desc-col"><b>'+esc(x.t)+' mm'+(x.finish?' &middot; '+esc(x.finish):'')+'</b><div class="cp-hint">'+esc(x.profiles.join(', '))+'</div></td>'+
+    '<td><span class="readout-cell">'+fmt(x.pcs,0)+'</span></td>'+
+    '<td><span class="readout-cell">'+(x.area?fmt(x.area,2):'-')+'</span></td>'+
+    '<td><span class="readout-cell">'+fmt(x.mass,1)+'</span></td>'+
+    '<td><span class="readout-cell">'+fmt(x.grossMass,1)+'</span></td>'+
+    '<td><span class="readout-cell">'+fmt(x.kgPerPc,1)+'</span></td>'+
+    '<td><span class="readout-cell"><b>'+fmt(x.sheets,0)+'</b></span></td>'+
+    '<td><span class="readout-cell">'+fmt(x.orderMass,1)+'</span></td></tr>').join('');
+  const tm = bs.reduce((s2,x)=>s2+x.mass,0), to = bs.reduce((s2,x)=>s2+x.orderMass,0), ts = bs.reduce((s2,x)=>s2+x.sheets,0);
+  return '<div class="group-total" style="margin-top:10px; font-size:12px;">Plate pooling by thickness</div>'+
+    '<div class="table-scroll"><table class="items-table"><thead><tr>'+
+      '<th class="desc-col">Thickness</th><th>Pcs</th><th>Net Area (m2)</th><th>Net Mass (kg)</th>'+
+      '<th>+ Allowance (kg)</th><th>kg / sheet</th><th>Sheets to buy</th><th>Order Mass (kg)</th></tr></thead>'+
+      '<tbody>'+rows+'</tbody><tfoot><tr class="sum-row"><td class="desc-col"><b>Totals</b></td><td></td><td></td>'+
+      '<td><span class="readout-cell">'+fmt(tm,1)+'</span></td><td></td><td></td>'+
+      '<td><span class="readout-cell"><b>'+fmt(ts,0)+'</b></span></td>'+
+      '<td><span class="readout-cell">'+fmt(to,1)+'</span></td></tr></tfoot></table></div>';
+}
+function impSummaryHTML(){
+  const t = impTotals();
+  return 'Selected: <b>'+t.n+'</b> profiles &nbsp;|&nbsp; <b>'+fmt(t.pcs,0)+'</b> parts &nbsp;|&nbsp; <b>'+fmt(t.mass,1)+' kg</b>';
+}
+function refreshImpSummary(){ const el=document.getElementById('impSummary'); if(el) el.innerHTML=impSummaryHTML(); }
+
+function applyImport(){
+  const o = imp.opts;
+  const std = num(o.stdLength)||6;
+  const sheetL = num(o.sheetL)||1220, sheetW = num(o.sheetW)||2440, waste = num(o.wastage)||0;
+  const phase = (imp.meta && imp.meta.phase) ? String(imp.meta.phase).trim() : '';
+  const gname = (label)=> (o.prefixPhase && phase) ? (phase+' - '+label) : label;
+
+  const buckets = {};   // groupName -> rows[]
+  const generalRows = [];
+
+  const put = (name,row)=>{ (buckets[name] = buckets[name] || []).push(row); };
+
+  imp.groups.filter(g=>g.include).forEach(g=>{
+    const cls = resolve(g);
+    if(cls.kind==='other'){
+      generalRows.push(blankGeneralRow());
+      const r = generalRows[generalRows.length-1];
+      r.desc = g.profile; r.qty = String(g.pcs); r.unit = 'No';
+      r.remarks = 'Tekla import: '+fmt(g.lenMM/1000,2)+' m total, '+fmt(g.mass,1)+' kg';
+      return;
+    }
+    if(cls.kind==='plate'){
+      if(o.plateMode!=='sheets'){
+        g.cuts.forEach(c=>{
+          put(gname('PLATES'), blankMaterialRow({ kind:'plate', mode:'custom', category:'plates',
+            profile:(cls.fromSheet ? g.profile+' - '+c.length+'mm' : 'PLT'+cls.t+'x'+cls.w+' - '+c.length+'mm'),
+            plateL:String(c.length), plateW:String(cls.w), plateT:String(cls.t),
+            nos:String(c.no), unit:'No',
+            remarks:(cls.fromSheet ? 'Folded from '+cls.t+'mm'+(cls.finish?' '+cls.finish:'')+' sheet, '+cls.w+'mm girth' : 'Tekla import') }));
+        });
+      }
+      return; // sheet mode handled once, after this loop, via plateBuckets()
+    }
+    // section
+    const label = cls.label || 'SECTIONS';
+    const target = o.grouping==='single' ? gname('TEKLA IMPORT')
+                 : o.grouping==='profile' ? gname(g.profile.toUpperCase())
+                 : gname(label);
+    const base = { kind:'section', category:cls.category, unit:'No',
+      stdLength:String(num(g.stdLength)||std),
+      mode: cls.matched ? 'catalog' : 'custom',
+      sizeIdx: cls.matched ? cls.sizeIdx : 0,
+      profile: g.profile, kgPerM: cls.kgPerM ? String(cls.kgPerM) : '' };
+    if(o.detailMode==='profile'){
+      put(target, blankMaterialRow(Object.assign({}, base, {
+        nos:'1', unitLength:String(round4(g.lenMM/1000)),
+        remarks: g.pcs+' pcs in '+g.cuts.length+' cut length'+(g.cuts.length>1?'s':'') })));
+    } else {
+      g.cuts.forEach(c=>{
+        put(target, blankMaterialRow(Object.assign({}, base, {
+          nos:String(c.no), unitLength:String(round4(c.length/1000)), remarks:'Tekla import' })));
+      });
+    }
+  });
+
+  if(o.plateMode==='sheets'){
+    plateBuckets().forEach(x=>{
+      put(gname(x.finish ? 'PLATES - '+x.finish : 'PLATES'), blankMaterialRow({ kind:'plate', category:'plates',
+        mode: x.sheetIdx>=0 ? 'catalog' : 'custom', sizeIdx: x.sheetIdx>=0 ? x.sheetIdx : 0,
+        profile: x.sizeStr, plateL:String(sheetL), plateW:String(sheetW), plateT:String(x.t),
+        nos:String(x.sheets), unit:'No', unitOrderMass:'',
+        remarks: fmt(x.pcs,0)+' pcs, net '+fmt(x.mass,1)+' kg'+(x.area?' / '+fmt(x.area,2)+' m2':'')+
+                 ', +'+fmt(waste,0)+'% allowance, '+fmt(x.kgPerPc,1)+' kg per sheet' }));
+    });
+  }
+
+  const newGroups = Object.keys(buckets).map(name=>({ id:uid(), name:name, rows:buckets[name] }));
+  if(!newGroups.length && !generalRows.length){ alert('Nothing was selected to import.'); return; }
+
+  if(o.replace) state.materialGroups = newGroups;
+  else state.materialGroups = state.materialGroups.filter(g=>g.rows.some(r=>rowDesc(r))).concat(newGroups);
+  if(!state.materialGroups.length) state.materialGroups=[blankGroup('ANGLE SECTION')];
+
+  if(generalRows.length){
+    state.generalGroups = state.generalGroups || [];
+    state.generalGroups.push({ id:uid(), name:gname('TEKLA - OTHER ITEMS'), rows:generalRows });
+  }
+  if(!state.meta.project && imp.meta.project) state.meta.project = imp.meta.project;
+  if(!state.meta.refNo && imp.meta.projectNo) state.meta.refNo = imp.meta.projectNo;
+
+  imp = null;
+  renderImportModal();
+  saveState();
+  rerender();
+}
+
+/* ---------- import modal events ---------- */
+document.addEventListener('input', e=>{
+  if(!imp || !e.target.closest || !e.target.closest('#modalRoot')) return;
+  const t = e.target, ds = t.dataset;
+  if(ds.impopt){
+    imp.opts[ds.impopt] = (t.type==='checkbox') ? t.checked : t.value;
+    if(t.tagName==='SELECT' || t.type==='checkbox') renderImportModal();
+    return;
+  }
+  if(ds.impgi!==undefined && ds.impfield){
+    const g = imp.groups[+ds.impgi]; if(!g) return;
+    g[ds.impfield] = (t.type==='checkbox') ? t.checked : t.value;
+    if(t.type==='checkbox') renderImportModal(); else refreshImpSummary();
+    return;
+  }
+});
+document.addEventListener('click', e=>{
+  const el = e.target.closest('[data-impaction]'); if(!el || !imp) return;
+  switch(el.dataset.impaction){
+    case 'close': imp=null; renderImportModal(); break;
+    case 'toggle-all': { const on = imp.groups.some(g=>!g.include); imp.groups.forEach(g=>g.include=on); renderImportModal(); break; }
+    case 'apply': applyImport(); break;
+  }
+});
+document.addEventListener('keydown', e=>{ if(e.key==='Escape' && imp){ imp=null; renderImportModal(); } });
+
 /* ============================ EVENTS ============================ */
 document.addEventListener('input', e=>{
   const t=e.target;
   if(t.dataset.meta){ state.meta[t.dataset.meta]=t.value; saveLocalOnly(); return; }
   if(t.dataset.metaCheck){ state.meta[t.dataset.metaCheck]=t.checked; saveState(); rerender(); return; }
+  if(t.dataset.ireq){
+    const q=(state.installerReqs||[]).find(x=>x.id===t.dataset.ireq);
+    if(q){
+      if(t.dataset.idedn && t.dataset.idfield){
+        const d=(q.deductions||[]).find(x=>x.id===t.dataset.idedn);
+        if(d){ d[t.dataset.idfield]=t.value; if(t.dataset.idfield==='amount') rerenderKeep(); else saveLocalOnly(); }
+        return;
+      }
+      const itr=t.closest('tr[data-irow]');
+      if(itr && t.dataset.irfield){
+        const r=q.rows[+itr.dataset.irow];
+        if(r){
+          r[t.dataset.irfield]=t.value;
+          if(t.tagName==='SELECT'){ saveState(); rerender(); }
+          else if(['totalQty','qtyDone','rate'].indexOf(t.dataset.irfield)>=0) rerenderKeep();
+          else saveLocalOnly();
+        }
+        return;
+      }
+      if(t.dataset.ifield){
+        q[t.dataset.ifield]=t.value;
+        if(['contractOverride','retentionPct'].indexOf(t.dataset.ifield)>=0) rerenderKeep(); else saveLocalOnly();
+        return;
+      }
+    }
+    return;
+  }
   const tr=t.closest('tr[data-group]');
   if(tr && t.dataset.field){
     const g=state.materialGroups.find(x=>x.id===tr.dataset.group);
@@ -3064,12 +3783,22 @@ document.addEventListener('click', e=>{
     case 'remove-general-group': if(confirm('Remove this item group?')){ state.generalGroups=(state.generalGroups||[]).filter(g=>g.id!==ds.ggroup); saveState(); rerender(); } break;
     case 'add-general-row': { const g=(state.generalGroups||[]).find(x=>x.id===ds.ggroup); if(g) g.rows.push(blankGeneralRow()); saveState(); rerender(); break; }
     case 'remove-general-row': { const g=(state.generalGroups||[]).find(x=>x.id===ds.ggroup); if(g){ g.rows.splice(+ds.grow,1); if(!g.rows.length) g.rows.push(blankGeneralRow()); } saveState(); rerender(); break; }
+    case 'add-installer': (state.installerReqs=state.installerReqs||[]).push(blankInstallerReq()); saveState(); rerender(); break;
+    case 'remove-installer': if(confirm('Remove this installer requisition?')){ state.installerReqs=(state.installerReqs||[]).filter(q=>q.id!==ds.ireq); saveState(); rerender(); } break;
+    case 'add-installer-row': { const q=(state.installerReqs||[]).find(x=>x.id===ds.ireq); if(q) q.rows.push(blankInstallerRow()); saveState(); rerender(); break; }
+    case 'remove-installer-row': { const q=(state.installerReqs||[]).find(x=>x.id===ds.ireq); if(q){ q.rows.splice(+ds.irow,1); if(!q.rows.length) q.rows.push(blankInstallerRow()); } saveState(); rerender(); break; }
+    case 'add-deduction': { const q=(state.installerReqs||[]).find(x=>x.id===ds.ireq); if(q) (q.deductions=q.deductions||[]).push(blankDeduction('Less: ','')); saveState(); rerender(); break; }
+    case 'remove-deduction': { const q=(state.installerReqs||[]).find(x=>x.id===ds.ireq); if(q) q.deductions=(q.deductions||[]).filter(d=>d.id!==ds.dedn); saveState(); rerender(); break; }
   }
 });
 document.getElementById('importFile').addEventListener('change', e=>{
   const file=e.target.files[0]; if(!file) return; const reader=new FileReader();
   reader.onload=()=>{ try{ state=migrateState(JSON.parse(reader.result)); saveState(); rerender(); }catch(err){ alert('Could not read that file as valid JSON.'); } };
   reader.readAsText(file); e.target.value='';
+});
+document.getElementById('teklaFile').addEventListener('change', e=>{
+  const file=e.target.files[0]; e.target.value='';
+  if(file) handleTeklaFile(file);
 });
 
 /* ============================ EXCEL EXPORT ============================ */
@@ -3141,6 +3870,37 @@ function buildWorkbook(){
     XLSX.utils.book_append_sheet(wb, sheet3, 'Paint Procurement');
   }
 
+  (state.installerReqs||[]).forEach((q,qi)=>{
+    const c = instReqCalc(q);
+    const ws = [];
+    ws.push(['ROPA ENGINEERING - INSTALLER / SUBCONTRACTOR PAYMENT REQUISITION']);
+    ws.push(['Project:', m.project||'-', '', 'Date:', q.date||'-']);
+    ws.push(['Installer:', q.name||'-', '', 'Trade:', q.trade||'-']);
+    ws.push(['Scope of Work:', q.scope||'-']);
+    ws.push([]);
+    ws.push(['WORK DONE DETAILS']);
+    ws.push(['Item No.','Description of Work','Unit','Total Qty','Qty Done','Rate (Ksh)','% Complete','Line Value (Ksh)','Value Done (Ksh)']);
+    (q.rows||[]).filter(r=>(r.desc||'').trim()).forEach((r,i)=>{
+      const rc = instRowCalc(r);
+      ws.push([i+1, r.desc, r.unit, num(r.totalQty), num(r.qtyDone), num(r.rate), round2(rc.pct), rc.contract, rc.done]);
+    });
+    ws.push([]);
+    ws.push(['PAYMENT CALCULATION']);
+    ws.push(['A','Contract Sum','','','','','','', c.contractSum]);
+    ws.push(['B','Total Value of Work Done (this requisition)','','','','','', round2(c.overallPct)+'%', c.done]);
+    (q.deductions||[]).forEach((d,i)=>{
+      ws.push([String.fromCharCode(67+i), d.label||'Deduction','','','','','','', -num(d.amount)]);
+    });
+    ws.push(['','NET AMOUNT PAYABLE','','','','','','', c.net]);
+    ws.push([]);
+    ws.push(['Retention ('+(q.retentionPct||0)+'% of contract sum)','','','','','','','', c.retention]);
+    if(q.notes) ws.push(['NB', q.notes]);
+    ws.push([]);
+    ws.push(['Prepared by:', q.preparedBy||'-']);
+    const sh = XLSX.utils.aoa_to_sheet(ws);
+    XLSX.utils.book_append_sheet(wb, sh, ('Installer '+(qi+1)).slice(0,31));
+  });
+
   return wb;
 }
 function exportXLSX(){
@@ -3187,7 +3947,47 @@ function buildPrintHTML(){
   }).join('');
   const matColspan=colCount;
   const labelColspan=3+(showElCols?2:0), tailColspan=4+(showStock?1:0);
-  return '<div class="print-page"><div class="p-letterhead"><div class="p-firm-name-block"><div class="p-firm-name">ROPA ENGINEERING</div><div class="p-firm-line">Structural Steel Fabrication &amp; Erection - Nairobi, Kenya</div></div><div class="spacer" style="flex:1;"></div><div class="p-doctitle"><div class="p-doclabel">MATERIAL REQUISITION</div><div class="p-docmeta">No: '+(esc(m.refNo)||'-')+'</div><div class="p-docmeta">Date: '+esc(m.date)+'</div></div></div><div class="p-projblock"><div><b>Project:</b> '+(esc(m.project)||'-')+'</div><div><b>Client:</b> '+(esc(m.client)||'-')+'&nbsp;&nbsp;&nbsp;<b>Location:</b> '+(esc(m.location)||'-')+'</div></div><div class="p-section-title">Material Requisition</div><table class="p-table"><thead><tr><th class="p-no">No</th><th class="p-desc">Section / Profile</th>'+(showElCols?'<th>Element Qty</th><th>Element Length</th>':'')+'<th>T-Length</th><th>T-Mass</th><th>Std Order Length</th><th>Bars Reqd</th><th>Unit</th>'+(showStock?'<th>Available in Stock</th>':'')+'<th>Qty to Order</th></tr></thead><tbody>'+(matRows || '<tr><td colspan="'+matColspan+'" style="text-align:center;color:#888;">No material items entered.</td></tr>')+'</tbody><tfoot><tr class="p-sumrow"><td colspan="'+labelColspan+'" style="text-align:right;">Grand Total Mass:</td><td class="p-num">'+fmt(grandMassTotal(),1)+' kg</td><td colspan="'+tailColspan+'"></td></tr></tfoot></table>'+(generalRowsHtml?'<div class="p-section-title">General Items / Accessories</div><table class="p-table"><thead><tr><th class="p-no">No</th><th class="p-desc">Item Description</th><th>Qty</th><th>Unit</th><th class="p-desc">Remarks</th></tr></thead><tbody>'+generalRowsHtml+'</tbody></table>':'')+(paintProc.length?'<div class="p-section-title">Paint Procurement Summary</div><table class="p-table"><thead><tr><th class="p-desc">Category</th><th class="p-desc">Product</th><th>Total Liquid (L)</th><th>Paint 80% (L)</th><th>Thinner 20% (L)</th><th>Can Size (L)</th><th>Cans to Order</th></tr></thead><tbody>'+paintRowsHtml+'</tbody><tfoot><tr class="p-sumrow"><td colspan="4" style="text-align:right;">Totals:</td><td class="p-num">'+fmt(totalThinner,2)+' L</td><td class="p-num">'+THINNER_CAN_L+'L</td><td class="p-num">'+fmt(thinnerCans,0)+' thinner cans</td></tr></tfoot></table>':'')+'<div class="p-sig-row"><div class="p-sig-col"><img class="p-sig-img" src="'+SIGNATURE_DATA_URI+'" alt="Signature"><div class="p-sig-line">Dennis Kihiu</div></div></div><div class="p-foot">Ropa Engineering - Material Requisition generated '+new Date().toLocaleDateString()+'</div></div>';
+  return '<div class="print-page"><div class="p-letterhead"><div class="p-firm-name-block"><div class="p-firm-name">ROPA ENGINEERING</div><div class="p-firm-line">Structural Steel Fabrication &amp; Erection - Nairobi, Kenya</div></div><div class="spacer" style="flex:1;"></div><div class="p-doctitle"><div class="p-doclabel">MATERIAL REQUISITION</div><div class="p-docmeta">No: '+(esc(m.refNo)||'-')+'</div><div class="p-docmeta">Date: '+esc(m.date)+'</div></div></div><div class="p-projblock"><div><b>Project:</b> '+(esc(m.project)||'-')+'</div><div><b>Client:</b> '+(esc(m.client)||'-')+'&nbsp;&nbsp;&nbsp;<b>Location:</b> '+(esc(m.location)||'-')+'</div></div><div class="p-section-title">Material Requisition</div><table class="p-table"><thead><tr><th class="p-no">No</th><th class="p-desc">Section / Profile</th>'+(showElCols?'<th>Element Qty</th><th>Element Length</th>':'')+'<th>T-Length</th><th>T-Mass</th><th>Std Order Length</th><th>Bars Reqd</th><th>Unit</th>'+(showStock?'<th>Available in Stock</th>':'')+'<th>Qty to Order</th></tr></thead><tbody>'+(matRows || '<tr><td colspan="'+matColspan+'" style="text-align:center;color:#888;">No material items entered.</td></tr>')+'</tbody><tfoot><tr class="p-sumrow"><td colspan="'+labelColspan+'" style="text-align:right;">Grand Total Mass:</td><td class="p-num">'+fmt(grandMassTotal(),1)+' kg</td><td colspan="'+tailColspan+'"></td></tr></tfoot></table>'+(generalRowsHtml?'<div class="p-section-title">General Items / Accessories</div><table class="p-table"><thead><tr><th class="p-no">No</th><th class="p-desc">Item Description</th><th>Qty</th><th>Unit</th><th class="p-desc">Remarks</th></tr></thead><tbody>'+generalRowsHtml+'</tbody></table>':'')+(paintProc.length?'<div class="p-section-title">Paint Procurement Summary</div><table class="p-table"><thead><tr><th class="p-desc">Category</th><th class="p-desc">Product</th><th>Total Liquid (L)</th><th>Paint 80% (L)</th><th>Thinner 20% (L)</th><th>Can Size (L)</th><th>Cans to Order</th></tr></thead><tbody>'+paintRowsHtml+'</tbody><tfoot><tr class="p-sumrow"><td colspan="4" style="text-align:right;">Totals:</td><td class="p-num">'+fmt(totalThinner,2)+' L</td><td class="p-num">'+THINNER_CAN_L+'L</td><td class="p-num">'+fmt(thinnerCans,0)+' thinner cans</td></tr></tfoot></table>':'')+'<div class="p-sig-row"><div class="p-sig-col"><img class="p-sig-img" src="'+SIGNATURE_DATA_URI+'" alt="Signature"><div class="p-sig-line">Dennis Kihiu</div></div></div><div class="p-foot">Ropa Engineering - Material Requisition generated '+new Date().toLocaleDateString()+'</div></div>'+installerPrintPages();
+}
+function installerPrintPages(){
+  const m = state.meta;
+  return (state.installerReqs||[]).filter(q=>(q.name||'').trim() || (q.rows||[]).some(r=>(r.desc||'').trim())).map(q=>{
+    const c = instReqCalc(q);
+    const rows = (q.rows||[]).filter(r=>(r.desc||'').trim()).map((r,i)=>{
+      const rc = instRowCalc(r);
+      return '<tr><td class="p-no">'+(i+1)+'</td><td class="p-desc">'+esc(r.desc)+'</td><td class="p-unit">'+esc(r.unit)+'</td>'+
+        '<td class="p-num">'+fmt(num(r.totalQty),2)+'</td><td class="p-num">'+fmt(num(r.qtyDone),2)+'</td>'+
+        '<td class="p-num">'+fmt(num(r.rate),2)+'</td><td class="p-num">'+fmt(rc.pct,1)+'%</td>'+
+        '<td class="p-num">'+fmt(rc.contract,2)+'</td><td class="p-num">'+fmt(rc.done,2)+'</td></tr>';
+    }).join('') || '<tr><td colspan="9" style="text-align:center;color:#888;">No work items entered.</td></tr>';
+    const deds = (q.deductions||[]).map((d,i)=>
+      '<tr><td class="p-no">'+String.fromCharCode(67+i)+'</td><td class="p-desc" colspan="2">'+esc(d.label||'Deduction')+'</td>'+
+      '<td class="p-num">('+fmt(num(d.amount),2)+')</td></tr>').join('');
+    return '<div class="print-page"><div class="p-letterhead"><div class="p-firm-name-block">'+
+      '<div class="p-firm-name">ROPA ENGINEERING</div><div class="p-firm-line">Structural Steel Fabrication &amp; Erection - Nairobi, Kenya</div></div>'+
+      '<div class="spacer" style="flex:1;"></div><div class="p-doctitle"><div class="p-doclabel">SUBCONTRACTOR PAYMENT REQUISITION</div>'+
+      '<div class="p-docmeta">Date: '+esc(q.date||m.date)+'</div></div></div>'+
+      '<div class="p-projblock"><div><b>Project:</b> '+(esc(m.project)||'-')+'</div>'+
+      '<div><b>Subcontractor:</b> '+(esc(q.name)||'-')+'&nbsp;&nbsp;&nbsp;<b>Trade:</b> '+(esc(q.trade)||'-')+'</div>'+
+      '<div><b>Scope of Work:</b> '+(esc(q.scope)||'-')+'</div></div>'+
+      '<div class="p-section-title">Work Done Details</div>'+
+      '<table class="p-table"><thead><tr><th class="p-no">No</th><th class="p-desc">Description of Work</th><th>Unit</th>'+
+      '<th>Total Qty</th><th>Qty Done</th><th>Rate (Ksh)</th><th>% Complete</th><th>Line Value</th><th>Value Done</th></tr></thead>'+
+      '<tbody>'+rows+'</tbody></table>'+
+      '<div class="p-section-title">Payment Calculation</div>'+
+      '<table class="p-table"><tbody>'+
+        '<tr><td class="p-no">A</td><td class="p-desc" colspan="2">Contract Sum</td><td class="p-num">'+fmt(c.contractSum,2)+'</td></tr>'+
+        '<tr><td class="p-no">B</td><td class="p-desc" colspan="2">Total Value of Work Done (this requisition) - '+fmt(c.overallPct,1)+'% complete</td><td class="p-num">'+fmt(c.done,2)+'</td></tr>'+
+        deds+
+        '<tr class="p-inst-net"><td class="p-no"></td><td class="p-desc" colspan="2">NET AMOUNT PAYABLE</td><td class="p-num">Ksh '+fmt(c.net,2)+'</td></tr>'+
+        '<tr class="p-sumrow"><td class="p-no"></td><td class="p-desc" colspan="2">Retention ('+esc(q.retentionPct||'0')+'% of contract sum)</td><td class="p-num">'+fmt(c.retention,2)+'</td></tr>'+
+      '</tbody></table>'+
+      (q.notes?'<div class="p-nb"><b>NB:</b> '+esc(q.notes)+'</div>':'')+
+      '<div class="p-sig-row"><div class="p-sig-col"><img class="p-sig-img" src="'+SIGNATURE_DATA_URI+'" alt="Signature"><div class="p-sig-line">'+(esc(q.preparedBy)||'Prepared By')+'</div></div>'+
+      '<div class="p-sig-col"><div class="p-sig-line">Subcontractor</div></div>'+
+      '<div class="p-sig-col"><div class="p-sig-line">Approved By</div></div></div>'+
+      '<div class="p-foot">Ropa Engineering - Subcontractor Payment Requisition generated '+new Date().toLocaleDateString()+'</div></div>';
+  }).join('');
 }
 
 /* ===================== Cloud sync (Supabase) ===================== */
