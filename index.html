@@ -190,6 +190,32 @@ table.items-table{width:100%; border-collapse:collapse; font-size:12.5px;}
 .imp-picker-drop .imp-sub{font-size:11.5px; color:var(--steel);}
 .imp-col-hint{margin-top:14px; font-size:11.5px; color:var(--steel); background:#FAF8F2; border:1px solid var(--line); border-radius:var(--r); padding:10px 12px;}
 .imp-col-hint code{background:#F0EEE6; padding:1px 5px; border-radius:3px; font-family:'IBM Plex Mono',monospace;}
+/* ---------- Top-level tabs ---------- */
+.app-tabs{display:flex; gap:4px; margin:0 0 16px;}
+.app-tab{padding:9px 18px; font-size:13px; font-weight:700; color:var(--steel); background:var(--card); border:1px solid var(--line); border-bottom:none; border-radius:var(--r) var(--r) 0 0; cursor:pointer; font-family:'Inter',sans-serif;}
+.app-tab.active{color:var(--navy); background:#fff; box-shadow:0 -2px 0 var(--blue) inset;}
+/* ---------- Row highlight color swatch ---------- */
+.row-color-cell{text-align:center; padding:2px !important;}
+.row-color-swatch{width:22px; height:22px; padding:0; border:1px solid var(--line); border-radius:4px; cursor:pointer; background:transparent;}
+.row-color-clear{border:none; background:none; color:var(--steel); font-size:10px; cursor:pointer; display:block; margin:2px auto 0; text-decoration:underline;}
+/* ---------- Counter Check ---------- */
+.cc-grid{display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:18px;}
+@media (max-width:800px){ .cc-grid{grid-template-columns:1fr;} }
+.cc-side{border:1px solid var(--line); border-radius:var(--r); padding:16px; background:#FAF8F2;}
+.cc-side h3{margin:0 0 4px; font-family:'Roboto Slab',serif; font-size:14px; color:var(--navy);}
+.cc-side .cc-sub{font-size:11.5px; color:var(--steel); margin-bottom:10px;}
+.cc-stat{font-size:12.5px; color:var(--navy); margin-top:8px;}
+.cc-stat b{font-family:'IBM Plex Mono',monospace;}
+.cc-table{width:100%; border-collapse:collapse; font-size:12px; margin-top:6px;}
+.cc-table th{background:#F0EEE6; border:1px solid var(--line); padding:6px 7px; text-align:left; font-size:10.5px; text-transform:uppercase; letter-spacing:.3px; color:var(--steel);}
+.cc-table td{border:1px solid var(--line); padding:5px 7px; vertical-align:top;}
+.cc-table td.n{text-align:right; font-family:'IBM Plex Mono',monospace;}
+.cc-badge{display:inline-block; padding:2px 8px; border-radius:10px; font-size:10.5px; font-weight:700;}
+.cc-badge.ok{background:#E3F3E6; color:#1E7A34;}
+.cc-badge.warn{background:#FDEFDC; color:#A05A00;}
+.cc-badge.bad{background:#FBE3E3; color:#B3271E;}
+.cc-badge.only{background:#EAECEF; color:var(--steel);}
+.cc-src{font-size:10.5px; color:var(--steel); display:block; margin-top:2px;}
 .ins-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:10px 14px; margin-bottom:12px;}
 .ins-grid label{display:flex; flex-direction:column; gap:3px; font-size:10.5px; font-weight:600; color:var(--steel); text-transform:uppercase; letter-spacing:.3px;}
 .ins-summary{margin-top:10px; border:1px solid var(--line); border-radius:var(--r); overflow:hidden;}
@@ -270,9 +296,11 @@ tr.no-print-row input, tr.no-print-row select, .group-block.no-print-row input, 
 <div class="shell" id="shell"></div>
 
 <div id="importModal" class="modal-back hidden"></div>
+<div id="ccMapModal" class="modal-back hidden"></div>
 
 <div id="printArea"></div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
@@ -2732,23 +2760,23 @@ function plateThicknessFromText(text){ const m=String(text||'').match(/x\s*([0-9
 
 function blankMaterialRow(over){
   return Object.assign({
-    id:uid(), kind:'section', mode:'catalog', category:'UB', sizeIdx:0, profile:'', nos:'', unitLength:'', totalLength:'', stdLength:'6', barsToOrder:'', qty:'', unit:'No', mass:'', avail:'', orderQty:'', remarks:'', print:true,
+    id:uid(), kind:'section', mode:'catalog', category:'UB', sizeIdx:0, profile:'', nos:'', unitLength:'', totalLength:'', stdLength:'6', barsToOrder:'', qty:'', unit:'No', mass:'', avail:'', orderQty:'', remarks:'', print:true, color:'',
     kgPerM:'', plateL:'1220', plateW:'2440', plateT:'', unitOrderMass:'', platePiecesNeeded:0, plateOrderPieces:0
   }, over||{});
 }
 function blankGroup(name){ return { id:uid(), name:name||'NEW SECTION', rows:[blankMaterialRow()] }; }
-function blankGeneralRow(){ return { id:uid(), desc:'', qty:'', unit:'No', remarks:'', print:true }; }
+function blankGeneralRow(){ return { id:uid(), desc:'', qty:'', unit:'No', remarks:'', print:true, color:'' }; }
 function blankGeneralGroup(name){ return { id:uid(), name:name||'GENERAL ITEMS', rows:[blankGeneralRow()] }; }
 function blankPaintCoat(label,type,spread,can,enabled){
   return { id:uid(), label:label||'New Coat', type:type||'', spread:spread===undefined?10:spread, can:can===undefined?4:can, enabled:enabled===undefined?true:enabled };
 }
 function blankPaintRow(){
-  return { id:uid(), item:'', area:'', wastage:10, print:true, coats:[ blankPaintCoat('Primer','Epoxy Primer',10,20,true), blankPaintCoat('1st Coat','',10,4,true), blankPaintCoat('2nd Coat','',10,4,false) ] };
+  return { id:uid(), item:'', area:'', wastage:10, print:true, color:'', coats:[ blankPaintCoat('Primer','Epoxy Primer',10,20,true), blankPaintCoat('1st Coat','',10,4,true), blankPaintCoat('2nd Coat','',10,4,false) ] };
 }
 /* ---------- Installer / subcontractor payment requisition ---------- */
 const INS_UNITS = ['SM','LM','No','Kg','Item','Tonne','Day'];
-function blankInstallerItem(over){ return Object.assign({ id:uid(), desc:'', unit:'SM', totalQty:'', qtyDone:'', rate:'', print:true }, over||{}); }
-function blankInstallerDeduction(over){ return Object.assign({ id:uid(), desc:'', amount:'', print:true }, over||{}); }
+function blankInstallerItem(over){ return Object.assign({ id:uid(), desc:'', unit:'SM', totalQty:'', qtyDone:'', rate:'', print:true, color:'' }, over||{}); }
+function blankInstallerDeduction(over){ return Object.assign({ id:uid(), desc:'', amount:'', print:true, color:'' }, over||{}); }
 function blankInstaller(){
   return {
     enabled:false,
@@ -2766,8 +2794,9 @@ function blankInstaller(){
     approvedBy:''
   };
 }
+function blankCounterCheckSide(){ return { imports:[] }; }
 function defaultState(){
-  return { id:uuid(), meta:{ project:'', client:'', location:'', refNo:'', date:todayISO(), preparedBy:'', requestedBy:'', printStock:false, printElementCols:true }, materialGroups:[ blankGroup('ANGLE SECTION') ], paintRows:[ blankPaintRow() ], generalGroups:[ blankGeneralGroup('GENERAL ITEMS') ], installer: blankInstaller() };
+  return { id:uuid(), meta:{ project:'', client:'', location:'', refNo:'', date:todayISO(), preparedBy:'', requestedBy:'', printStock:false, printElementCols:true }, materialGroups:[ blankGroup('ANGLE SECTION') ], paintRows:[ blankPaintRow() ], generalGroups:[ blankGeneralGroup('GENERAL ITEMS') ], installer: blankInstaller(), activeTab:'requisition', counterCheck:{ quote: blankCounterCheckSide(), tekla: blankCounterCheckSide() } };
 }
 function migrateState(s){
   if(!s || !s.meta) return defaultState();
@@ -2779,6 +2808,7 @@ function migrateState(s){
     (g.rows||[]).forEach(r=>{
       if(!r.id) r.id = uid();
       if(r.print===undefined) r.print = true;
+      if(r.color===undefined) r.color = '';
       if(!r.kind) r.kind = /plate/i.test((r.profile||'')+' '+(g.name||'')) ? 'plate' : 'section';
       if(!r.mode) r.mode = 'custom';
       r.unit = normUnit(r.unit || (r.kind==='plate'?'No':'No'));
@@ -2811,6 +2841,7 @@ function migrateState(s){
   s.paintRows.forEach(p=>{
     if(!p.id) p.id = uid();
     if(p.print===undefined) p.print = true;
+    if(p.color===undefined) p.color = '';
     if(!p.coats){
       // migrate legacy primer/coat1/coat2 structure to dynamic coats array
       const legacy = [];
@@ -2823,15 +2854,30 @@ function migrateState(s){
     p.coats.forEach(c=>{ if(!c.id) c.id = uid(); if(c.enabled===undefined) c.enabled = true; });
   });
   if(!s.generalGroups || !s.generalGroups.length) s.generalGroups = [blankGeneralGroup('GENERAL ITEMS')];
-  s.generalGroups.forEach(g=>{ if(!g.id) g.id=uid(); (g.rows||[]).forEach(r=>{ if(!r.id) r.id=uid(); if(!r.unit) r.unit='No'; if(r.print===undefined) r.print=true; }); if(!g.rows||!g.rows.length) g.rows=[blankGeneralRow()]; });
+  s.generalGroups.forEach(g=>{ if(!g.id) g.id=uid(); (g.rows||[]).forEach(r=>{ if(!r.id) r.id=uid(); if(!r.unit) r.unit='No'; if(r.print===undefined) r.print=true; if(r.color===undefined) r.color=''; }); if(!g.rows||!g.rows.length) g.rows=[blankGeneralRow()]; });
   if(!s.installer) s.installer = blankInstaller();
   else {
     const ins = s.installer, def = blankInstaller();
     Object.keys(def).forEach(k=>{ if(ins[k]===undefined) ins[k]=def[k]; });
     if(!ins.items || !ins.items.length) ins.items = [blankInstallerItem()];
-    ins.items.forEach(r=>{ if(!r.id) r.id=uid(); if(!r.unit) r.unit='SM'; if(r.print===undefined) r.print=true; });
+    ins.items.forEach(r=>{ if(!r.id) r.id=uid(); if(!r.unit) r.unit='SM'; if(r.print===undefined) r.print=true; if(r.color===undefined) r.color=''; });
     if(!ins.deductions) ins.deductions = [];
-    ins.deductions.forEach(r=>{ if(!r.id) r.id=uid(); if(r.print===undefined) r.print=true; });
+    ins.deductions.forEach(r=>{ if(!r.id) r.id=uid(); if(r.print===undefined) r.print=true; if(r.color===undefined) r.color=''; });
+  }
+  if(!s.activeTab) s.activeTab = 'requisition';
+  if(!s.counterCheck) s.counterCheck = { quote: blankCounterCheckSide(), tekla: blankCounterCheckSide() };
+  else {
+    ['quote','tekla'].forEach(side=>{
+      let sd = s.counterCheck[side];
+      if(!sd){ s.counterCheck[side] = blankCounterCheckSide(); return; }
+      if(!Array.isArray(sd.imports)){
+        // migrate from the old single {source, rows} shape
+        const imports = (sd.source && sd.rows && sd.rows.length) ? [{ id:uid(), source:sd.source, rows:sd.rows }] : [];
+        s.counterCheck[side] = { imports };
+      } else {
+        sd.imports.forEach(im=>{ if(!im.id) im.id=uid(); if(!im.rows) im.rows=[]; });
+      }
+    });
   }
   return s;
 }
@@ -2999,7 +3045,14 @@ function restoreFocus(info){
   }catch(e){}
 }
 function rerender(){ const focusInfo=captureFocus(); recalcAllMaterials(); document.getElementById('shell').innerHTML = renderApp(); rerenderCloud(); saveLocalOnly(); restoreFocus(focusInfo); }
-function renderApp(){ return renderMetaCard()+renderMaterialCard()+renderGeneralCard()+renderPaintCard()+rpDr5A77MDGrZBABiXNLkExAbJSbnaUkqJ()+renderInstallerCard(); }
+function renderApp(){
+  const tabs = '<div class="app-tabs">'+
+    '<button class="app-tab '+(state.activeTab!=='counterCheck'?'active':'')+'" data-action="switch-tab" data-tab="requisition">Requisition</button>'+
+    '<button class="app-tab '+(state.activeTab==='counterCheck'?'active':'')+'" data-action="switch-tab" data-tab="counterCheck">Counter Check</button>'+
+  '</div>';
+  if(state.activeTab==='counterCheck') return tabs + renderCounterCheckPage();
+  return tabs + renderMetaCard()+renderMaterialCard()+renderGeneralCard()+renderPaintCard()+rpDr5A77MDGrZBABiXNLkExAbJSbnaUkqJ()+renderInstallerCard();
+}
 function renderMetaCard(){
   const m = state.meta;
   const f = (key,label,type)=>'<label>'+label+'<input class="f-text" type="'+(type||'text')+'" data-meta="'+key+'" value="'+esc(m[key])+'"></label>';
@@ -3014,7 +3067,7 @@ function renderMaterialCard(){
 function renderMaterialGroup(g,gi){
   const rows = g.rows.map((r,ri)=>renderMaterialRow(g,r,ri)).join('');
   return '<div class="group-block" data-group="'+g.id+'"><div class="group-head"><input class="f-text group-name" data-group-name="'+g.id+'" value="'+esc(g.name)+'" style="text-transform:uppercase;"><div class="spacer"></div><button class="btn btn-add" data-action="add-row" data-group="'+g.id+'">+ Section</button><button class="btn btn-add" data-action="add-plate-row" data-group="'+g.id+'">+ Plate</button><button class="btn-ghost" data-action="remove-group" data-group="'+g.id+'">Remove group</button></div>'+
-    '<div class="table-scroll"><table class="items-table"><thead><tr><th class="num-col">No</th><th class="col-sm" title="Include this row when printing / exporting">Print</th><th class="desc-col">Section / Plate</th><th class="col-sm">Mode</th><th class="col-sm">Element Qty (Takeoff)</th><th class="col-sm">Element Unit Length</th><th class="col-sm">T-Length</th><th class="col-sm">T-Mass</th><th class="col-sm">Std Order Length</th><th class="col-sm">Bars Reqd</th><th class="col-unit">Unit</th><th class="col-sm">Available in Stock</th><th class="col-sm">Qty to Order</th><th class="desc-col">Remarks</th><th class="rm-col"></th></tr></thead><tbody>'+rows+'</tbody><tfoot><tr class="sum-row"><td colspan="7" style="text-align:right;">Group total mass:</td><td class="readout-cell">'+fmt(groupMassTotal(g),1)+'</td><td colspan="7"></td></tr></tfoot></table></div></div>';
+    '<div class="table-scroll"><table class="items-table"><thead><tr><th class="num-col">No</th><th class="col-sm" title="Highlight this row">Color</th><th class="col-sm" title="Include this row when printing / exporting">Print</th><th class="desc-col">Section / Plate</th><th class="col-sm">Mode</th><th class="col-sm">Element Qty (Takeoff)</th><th class="col-sm">Element Unit Length</th><th class="col-sm">T-Length</th><th class="col-sm">T-Mass</th><th class="col-sm">Std Order Length</th><th class="col-sm">Bars Reqd</th><th class="col-unit">Unit</th><th class="col-sm">Available in Stock</th><th class="col-sm">Qty to Order</th><th class="desc-col">Remarks</th><th class="rm-col"></th></tr></thead><tbody>'+rows+'</tbody><tfoot><tr class="sum-row"><td colspan="8" style="text-align:right;">Group total mass:</td><td class="readout-cell">'+fmt(groupMassTotal(g),1)+'</td><td colspan="7"></td></tr></tfoot></table></div></div>';
 }
 function renderCatalogControls(r){
   const cats = catalogCategories();
@@ -3035,7 +3088,9 @@ function renderMaterialRow(g,r,ri){
   const totalCell = isPlate ? '<span class="readout-cell">'+(r.mass?fmt(r.mass,2):'-')+'</span>' : '<span class="readout-cell">'+(r.totalLength?fmt(r.totalLength,2):'-')+'</span>';
   const massCell = '<span class="readout-cell">'+(esc(r.mass)||'-')+'</span>';
   const printCell = '<input type="checkbox" data-field="print" '+(r.print!==false?'checked':'')+' title="Include on printed/exported requisition">';
-  return '<tr data-group="'+g.id+'" data-row="'+ri+'" class="'+(r.print===false?'no-print-row':'')+'"><td class="num-col">'+(ri+1)+'</td><td class="num-col">'+printCell+'</td><td class="desc-col">'+desc+'</td><td>'+modeSel+'<select class="f-select" data-field="kind"><option value="section" '+(!isPlate?'selected':'')+'>Section</option><option value="plate" '+(isPlate?'selected':'')+'>Plate</option></select></td><td>'+nosCell+'</td><td>'+unitOrderCell+'</td><td>'+totalCell+'</td><td>'+massCell+'</td><td>'+stdLengthCell+'</td><td>'+barsCell+'</td><td><select class="f-select" data-field="unit">'+unitOptions(r.unit)+'</select></td><td><input class="f-num" data-field="avail" value="'+esc(r.avail)+'" placeholder="0"></td><td class="readout-cell">'+(r.orderQty||'-')+'</td><td><input class="f-text" data-field="remarks" value="'+esc(r.remarks)+'"></td><td class="rm-col"><button class="btn-icon" data-action="remove-row" data-group="'+g.id+'" data-row="'+ri+'">x</button></td></tr>';
+  const colorCell = '<td class="row-color-cell"><input type="color" class="row-color-swatch" data-field="color" value="'+(r.color||'#ffffff')+'" title="Highlight this row">'+(r.color?'<button type="button" class="row-color-clear" data-action="clear-row-color" data-scope="material" data-group="'+g.id+'" data-row="'+ri+'">clear</button>':'')+'</td>';
+  const rowStyle = r.color ? ' style="background:'+esc(r.color)+'22;"' : '';
+  return '<tr data-group="'+g.id+'" data-row="'+ri+'" class="'+(r.print===false?'no-print-row':'')+'"'+rowStyle+'><td class="num-col">'+(ri+1)+'</td>'+colorCell+'<td class="num-col">'+printCell+'</td><td class="desc-col">'+desc+'</td><td>'+modeSel+'<select class="f-select" data-field="kind"><option value="section" '+(!isPlate?'selected':'')+'>Section</option><option value="plate" '+(isPlate?'selected':'')+'>Plate</option></select></td><td>'+nosCell+'</td><td>'+unitOrderCell+'</td><td>'+totalCell+'</td><td>'+massCell+'</td><td>'+stdLengthCell+'</td><td>'+barsCell+'</td><td><select class="f-select" data-field="unit">'+unitOptions(r.unit)+'</select></td><td><input class="f-num" data-field="avail" value="'+esc(r.avail)+'" placeholder="0"></td><td class="readout-cell">'+(r.orderQty||'-')+'</td><td><input class="f-text" data-field="remarks" value="'+esc(r.remarks)+'"></td><td class="rm-col"><button class="btn-icon" data-action="remove-row" data-group="'+g.id+'" data-row="'+ri+'">x</button></td></tr>';
 }
 /* ============================ GENERAL ITEMS ============================ */
 function renderGeneralCard(){
@@ -3046,7 +3101,7 @@ function renderGeneralCard(){
 function renderGeneralGroup(g,gi){
   const rows = g.rows.map((r,ri)=>renderGeneralRow(g,r,ri)).join('');
   return '<div class="group-block" data-ggroup="'+g.id+'"><div class="group-head"><input class="f-text group-name" data-ggroup-name="'+g.id+'" value="'+esc(g.name)+'" style="text-transform:uppercase;"><div class="spacer"></div><button class="btn btn-add" data-action="add-general-row" data-ggroup="'+g.id+'">+ Item</button><button class="btn-ghost" data-action="remove-general-group" data-ggroup="'+g.id+'">Remove group</button></div>'+
-    '<div class="table-scroll"><table class="items-table"><thead><tr><th class="num-col">No</th><th class="col-sm" title="Include this row when printing / exporting">Print</th><th class="desc-col">Item Description</th><th class="col-sm">Qty</th><th class="col-unit">Unit</th><th class="desc-col">Remarks</th><th class="rm-col"></th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+    '<div class="table-scroll"><table class="items-table"><thead><tr><th class="num-col">No</th><th class="col-sm" title="Highlight this row">Color</th><th class="col-sm" title="Include this row when printing / exporting">Print</th><th class="desc-col">Item Description</th><th class="col-sm">Qty</th><th class="col-unit">Unit</th><th class="desc-col">Remarks</th><th class="rm-col"></th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
 }
 function generalUnitOptions(selected){
   const opts=[['No','No / Pcs'],['L','Litres'],['Sm','Sm (m\u00b2)'],['LM','LM (m)']];
@@ -3056,7 +3111,9 @@ function generalUnitOptions(selected){
 }
 function renderGeneralRow(g,r,ri){
   const printCell = '<input type="checkbox" data-gfield="print" '+(r.print!==false?'checked':'')+' title="Include on printed/exported requisition">';
-  return '<tr data-ggroup="'+g.id+'" data-grow="'+ri+'" class="'+(r.print===false?'no-print-row':'')+'"><td class="num-col">'+(ri+1)+'</td><td class="num-col">'+printCell+'</td><td class="desc-col"><input class="f-text" data-gfield="desc" value="'+esc(r.desc)+'" placeholder="e.g. 100mm uPVC downpipe"></td><td><input class="f-num" data-gfield="qty" value="'+esc(r.qty)+'" placeholder="0"></td><td><select class="f-select" data-gfield="unit">'+generalUnitOptions(r.unit)+'</select></td><td><input class="f-text" data-gfield="remarks" value="'+esc(r.remarks)+'"></td><td class="rm-col"><button class="btn-icon" data-action="remove-general-row" data-ggroup="'+g.id+'" data-grow="'+ri+'">x</button></td></tr>';
+  const colorCell = '<td class="row-color-cell"><input type="color" class="row-color-swatch" data-gfield="color" value="'+(r.color||'#ffffff')+'" title="Highlight this row">'+(r.color?'<button type="button" class="row-color-clear" data-action="clear-row-color" data-scope="general" data-ggroup="'+g.id+'" data-grow="'+ri+'">clear</button>':'')+'</td>';
+  const rowStyle = r.color ? ' style="background:'+esc(r.color)+'22;"' : '';
+  return '<tr data-ggroup="'+g.id+'" data-grow="'+ri+'" class="'+(r.print===false?'no-print-row':'')+'"'+rowStyle+'><td class="num-col">'+(ri+1)+'</td>'+colorCell+'<td class="num-col">'+printCell+'</td><td class="desc-col"><input class="f-text" data-gfield="desc" value="'+esc(r.desc)+'" placeholder="e.g. 100mm uPVC downpipe"></td><td><input class="f-num" data-gfield="qty" value="'+esc(r.qty)+'" placeholder="0"></td><td><select class="f-select" data-gfield="unit">'+generalUnitOptions(r.unit)+'</select></td><td><input class="f-text" data-gfield="remarks" value="'+esc(r.remarks)+'"></td><td class="rm-col"><button class="btn-icon" data-action="remove-general-row" data-ggroup="'+g.id+'" data-grow="'+ri+'">x</button></td></tr>';
 }
 function renderPaintCard(){
   const rows = state.paintRows.map((p,pi)=>renderPaintRow(p,pi)).join('');
@@ -3069,7 +3126,9 @@ function renderPaintRow(p,pi){
   const c = paintRowCalc(p);
   const coatBlocks = (p.coats||[]).map(coat=>paintCoatFields(p,coat)).join('');
   const readouts = c.coats.map(coat=>'<span>'+esc(coat.label||'Coat')+': <b>'+fmt(coat.req,2)+' L</b></span>').join('');
-  return '<div class="group-block'+(p.print===false?' no-print-row':'')+'" data-paintrow="'+p.id+'"><div class="paint-row-grid"><label style="font-size:10.5px; color:var(--steel); font-weight:600;">Paint Item / Description<input class="f-text" data-paint="'+p.id+'" data-pfield="item" value="'+esc(p.item)+'" placeholder="e.g. Steel columns - tank tower"></label><label style="font-size:10.5px; color:var(--steel); font-weight:600;">Area (sqm, both faces if applicable)<input class="f-num" data-paint="'+p.id+'" data-pfield="area" value="'+esc(p.area)+'"></label><label style="font-size:10.5px; color:var(--steel); font-weight:600;">Wastage %<input class="f-num" data-paint="'+p.id+'" data-pfield="wastage" value="'+esc(p.wastage)+'"></label><label class="inline-chk" style="font-size:10.5px; align-self:end; padding-bottom:8px;"><input type="checkbox" data-paint="'+p.id+'" data-pfield="print" '+(p.print!==false?'checked':'')+'> Include on print/export</label></div><div class="coat-grid" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:10px;">'+coatBlocks+'</div><div style="margin-top:8px;"><button class="btn-ghost" data-action="add-coat" data-paint="'+p.id+'">+ Coat</button></div><div class="paint-readouts">'+readouts+'<span>Row total liquid: <b>'+fmt(c.total,2)+' L</b></span><span style="margin-left:auto;"><button class="btn-ghost" data-action="remove-paint" data-paint="'+p.id+'">Remove item</button></span></div></div>';
+  const rowStyle = p.color ? ' style="background:'+esc(p.color)+'22;"' : '';
+  const colorCtl = '<label style="font-size:10.5px; color:var(--steel); font-weight:600; align-self:end; padding-bottom:8px;">Highlight<div style="display:flex; align-items:center; gap:6px;"><input type="color" class="row-color-swatch" data-paint="'+p.id+'" data-pfield="color" value="'+(p.color||'#ffffff')+'" title="Highlight this row">'+(p.color?'<button type="button" class="row-color-clear" data-action="clear-row-color" data-scope="paint" data-paint="'+p.id+'">clear</button>':'')+'</div></label>';
+  return '<div class="group-block'+(p.print===false?' no-print-row':'')+'"'+rowStyle+' data-paintrow="'+p.id+'"><div class="paint-row-grid"><label style="font-size:10.5px; color:var(--steel); font-weight:600;">Paint Item / Description<input class="f-text" data-paint="'+p.id+'" data-pfield="item" value="'+esc(p.item)+'" placeholder="e.g. Steel columns - tank tower"></label><label style="font-size:10.5px; color:var(--steel); font-weight:600;">Area (sqm, both faces if applicable)<input class="f-num" data-paint="'+p.id+'" data-pfield="area" value="'+esc(p.area)+'"></label><label style="font-size:10.5px; color:var(--steel); font-weight:600;">Wastage %<input class="f-num" data-paint="'+p.id+'" data-pfield="wastage" value="'+esc(p.wastage)+'"></label><label class="inline-chk" style="font-size:10.5px; align-self:end; padding-bottom:8px;"><input type="checkbox" data-paint="'+p.id+'" data-pfield="print" '+(p.print!==false?'checked':'')+'> Include on print/export</label>'+colorCtl+'</div><div class="coat-grid" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:10px;">'+coatBlocks+'</div><div style="margin-top:8px;"><button class="btn-ghost" data-action="add-coat" data-paint="'+p.id+'">+ Coat</button></div><div class="paint-readouts">'+readouts+'<span>Row total liquid: <b>'+fmt(c.total,2)+' L</b></span><span style="margin-left:auto;"><button class="btn-ghost" data-action="remove-paint" data-paint="'+p.id+'">Remove item</button></span></div></div>';
 }
 function rpDr5A77MDGrZBABiXNLkExAbJSbnaUkqJ(){
   const rows = paintProcurementRows();
@@ -3122,7 +3181,9 @@ function renderInstallerCard(){
 
   const itemRows = (ins.items||[]).map((r,i)=>{
     const ci = c.items[i] || {pct:0, valueDone:0};
-    return '<tr data-irow="'+r.id+'" class="'+(r.print===false?'no-print-row':'')+'"><td class="num-col">'+(i+1)+'</td>'+
+    const rowStyle = r.color ? ' style="background:'+esc(r.color)+'22;"' : '';
+    return '<tr data-irow="'+r.id+'" class="'+(r.print===false?'no-print-row':'')+'"'+rowStyle+'><td class="num-col">'+(i+1)+'</td>'+
+      '<td class="row-color-cell"><input type="color" class="row-color-swatch" data-ifield="color" value="'+(r.color||'#ffffff')+'" title="Highlight this row">'+(r.color?'<button type="button" class="row-color-clear" data-action="clear-row-color" data-scope="ins-item" data-id="'+r.id+'">clear</button>':'')+'</td>'+
       '<td class="num-col"><input type="checkbox" data-ifield="print" '+(r.print!==false?'checked':'')+' title="Include on printed/exported requisition"></td>'+
       '<td class="desc-col"><input class="f-text" data-ifield="desc" value="'+esc(r.desc)+'" placeholder="e.g. Erection of roof trusses"></td>'+
       '<td><select class="f-select" data-ifield="unit">'+insUnitOptions(r.unit)+'</select></td>'+
@@ -3134,11 +3195,15 @@ function renderInstallerCard(){
       '<td class="rm-col"><button class="btn-icon" data-action="remove-ins-item" data-id="'+r.id+'">x</button></td></tr>';
   }).join('');
 
-  const dedRows = (ins.deductions||[]).map((d,i)=>'<tr data-drow="'+d.id+'" class="'+(d.print===false?'no-print-row':'')+'"><td class="num-col">'+(i+1)+'</td>'+
+  const dedRows = (ins.deductions||[]).map((d,i)=>{
+    const rowStyle = d.color ? ' style="background:'+esc(d.color)+'22;"' : '';
+    return '<tr data-drow="'+d.id+'" class="'+(d.print===false?'no-print-row':'')+'"'+rowStyle+'><td class="num-col">'+(i+1)+'</td>'+
+    '<td class="row-color-cell"><input type="color" class="row-color-swatch" data-dfield="color" value="'+(d.color||'#ffffff')+'" title="Highlight this row">'+(d.color?'<button type="button" class="row-color-clear" data-action="clear-row-color" data-scope="ins-ded" data-id="'+d.id+'">clear</button>':'')+'</td>'+
     '<td class="num-col"><input type="checkbox" data-dfield="print" '+(d.print!==false?'checked':'')+' title="Include on printed/exported requisition"></td>'+
     '<td class="desc-col"><input class="f-text" data-dfield="desc" value="'+esc(d.desc)+'" placeholder="e.g. Payment 2 / materials issued / damage"></td>'+
     '<td><input class="f-num" data-dfield="amount" value="'+esc(d.amount)+'" placeholder="0"></td>'+
-    '<td class="rm-col"><button class="btn-icon" data-action="remove-ins-ded" data-id="'+d.id+'">x</button></td></tr>').join('');
+    '<td class="rm-col"><button class="btn-icon" data-action="remove-ins-ded" data-id="'+d.id+'">x</button></td></tr>';
+  }).join('');
 
   const summary = '<div class="ins-summary">'+
     '<div class="row"><span>A. Gross value of work done '+(ins.basis==='contract'?'('+fmt(c.overallPct,1)+'% of contract sum)':'(measured)')+'</span><b>'+money(c.gross)+'</b></div>'+
@@ -3161,10 +3226,10 @@ function renderInstallerCard(){
     '</div>'+
     '<label style="display:flex; flex-direction:column; gap:3px; font-size:10.5px; font-weight:600; color:var(--steel); text-transform:uppercase; letter-spacing:.3px; margin-bottom:12px;">Scope of Work<input class="f-text" data-ins="scope" value="'+esc(ins.scope)+'" placeholder="e.g. Painting of bins internal and external"></label>'+
     '<div class="group-block"><div class="group-head"><b style="font-size:12px;">WORK DONE DETAILS</b><div class="spacer"></div><button class="btn btn-add" data-action="add-ins-item">+ Work Item</button></div>'+
-      '<div class="table-scroll"><table class="items-table"><thead><tr><th class="num-col">No</th><th class="col-sm" title="Include this row when printing / exporting">Print</th><th class="desc-col">Description of Work</th><th class="col-unit">Unit</th><th class="col-sm">Total Qty</th><th class="col-sm">Qty Done</th><th class="col-sm">Rate (Ksh)</th><th class="col-sm">% Complete</th><th class="col-sm">Value Done (Ksh)</th><th class="rm-col"></th></tr></thead><tbody>'+(itemRows||'')+'</tbody>'+
-      '<tfoot><tr class="sum-row"><td colspan="7" style="text-align:right;">Totals - contract value / value done:</td><td class="readout-cell">'+fmt(c.totalContractValue,0)+'</td><td class="readout-cell">'+fmt(c.totalValueDone,2)+'</td><td></td></tr></tfoot></table></div></div>'+
+      '<div class="table-scroll"><table class="items-table"><thead><tr><th class="num-col">No</th><th class="col-sm" title="Highlight this row">Color</th><th class="col-sm" title="Include this row when printing / exporting">Print</th><th class="desc-col">Description of Work</th><th class="col-unit">Unit</th><th class="col-sm">Total Qty</th><th class="col-sm">Qty Done</th><th class="col-sm">Rate (Ksh)</th><th class="col-sm">% Complete</th><th class="col-sm">Value Done (Ksh)</th><th class="rm-col"></th></tr></thead><tbody>'+(itemRows||'')+'</tbody>'+
+      '<tfoot><tr class="sum-row"><td colspan="8" style="text-align:right;">Totals - contract value / value done:</td><td class="readout-cell">'+fmt(c.totalContractValue,0)+'</td><td class="readout-cell">'+fmt(c.totalValueDone,2)+'</td><td></td></tr></tfoot></table></div></div>'+
     '<div class="group-block"><div class="group-head"><b style="font-size:12px;">PREVIOUS PAYMENTS &amp; DEDUCTIONS</b><div class="spacer"></div><button class="btn btn-add" data-action="add-ins-ded">+ Deduction</button></div>'+
-      '<div class="table-scroll"><table class="items-table"><thead><tr><th class="num-col">No</th><th class="col-sm" title="Include this row when printing / exporting">Print</th><th class="desc-col">Description</th><th class="col-sm">Amount (Ksh)</th><th class="rm-col"></th></tr></thead><tbody>'+(dedRows||'<tr><td colspan="5" class="empty-row">No deductions recorded.</td></tr>')+'</tbody></table></div></div>'+
+      '<div class="table-scroll"><table class="items-table"><thead><tr><th class="num-col">No</th><th class="col-sm" title="Highlight this row">Color</th><th class="col-sm" title="Include this row when printing / exporting">Print</th><th class="desc-col">Description</th><th class="col-sm">Amount (Ksh)</th><th class="rm-col"></th></tr></thead><tbody>'+(dedRows||'<tr><td colspan="6" class="empty-row">No deductions recorded.</td></tr>')+'</tbody></table></div></div>'+
     '<label style="display:flex; flex-direction:column; gap:3px; font-size:10.5px; font-weight:600; color:var(--steel); text-transform:uppercase; letter-spacing:.3px; margin-top:10px;">Note / NB (printed under the payment summary)<input class="f-text" data-ins="note" value="'+esc(ins.note)+'" placeholder="e.g. Balance to be paid after snags are cleared on site"></label>'+
     summary;
 
@@ -3174,7 +3239,7 @@ function renderInstallerCard(){
 }
 
 /* ================= TEKLA MATERIAL LIST IMPORT ================= */
-const importUI = { open:false, stage:'picker', tab:'excel', rows:[], source:'', project:'', phase:'', mode:'append', error:'' };
+const importUI = { open:false, stage:'picker', tab:'excel', rows:[], source:'', project:'', phase:'', mode:'append', error:'', plateMode:'pool', profileMode:'group' };
 
 function teklaFamily(profile){
   const p = String(profile||'').trim().toUpperCase();
@@ -3254,35 +3319,51 @@ function parseTeklaText(text){
   });
   return out;
 }
-function parseTeklaSheet(aoa){
-  const out = { rows:[], project:'', phase:'' };
+function detectSheetHeader(aoa){
   const norm = s=>String(s||'').toLowerCase().replace(/[^a-z]/g,'');
-  let hdr=-1, map={};
-  for(let i=0;i<Math.min(aoa.length,40);i++){
-    const cells=(aoa[i]||[]).map(norm);
-    const pi=cells.findIndex(c=>c==='profile'||c==='section'||c==='profilename');
+  const PROFILE_WORDS = ['profile','section','profilename','sectiontype','sectionname'];
+  const LENGTH_WORDS = ['length','lengthmm','cutlength','barlength','partlength'];
+  const QTY_WORDS = ['no','qty','quantity','number','nos','pcs','pieces','count'];
+  const MATERIAL_WORDS = ['material','grade','steelgrade'];
+  const MASS_WORDS = ['mass','weight','masskg','weightkg','masseach','weighteach','unitweight','unitmass'];
+  for(let i=0;i<Math.min(aoa.length,80);i++){
+    const raw = aoa[i]||[];
+    const cells = raw.map(norm);
+    const pi = cells.findIndex(c=>PROFILE_WORDS.includes(c));
     if(pi<0) continue;
-    const li=cells.findIndex(c=>c==='length'||c==='lengthmm'||c==='cutlength');
-    if(li<0) continue;
-    hdr=i;
-    map.profile=pi; map.length=li;
-    map.qty=cells.findIndex(c=>c==='no'||c==='qty'||c==='quantity'||c==='number'||c==='nos'||c==='pcs');
-    map.material=cells.findIndex(c=>c==='material'||c==='grade');
-    map.mass=cells.findIndex(c=>c==='mass'||c==='weight'||c==='masskg'||c==='weightkg');
-    break;
+    const li = cells.findIndex(c=>LENGTH_WORDS.includes(c));
+    return {
+      hdr:i,
+      headers: raw.map(c=>String(c===undefined||c===null?'':c).trim()),
+      map:{
+        profile: pi,
+        length: li,
+        qty: cells.findIndex(c=>QTY_WORDS.includes(c)),
+        material: cells.findIndex(c=>MATERIAL_WORDS.includes(c)),
+        mass: cells.findIndex(c=>MASS_WORDS.includes(c))
+      }
+    };
   }
-  if(hdr<0){
+  return null;
+}
+function parseTeklaSheet(aoa){
+  const found = detectSheetHeader(aoa);
+  if(!found || found.map.length<0){
     // Not a recognisable table - fall back to text parsing of joined rows
     const text = aoa.map(r=>(r||[]).map(c=>c===undefined||c===null?'':String(c)).join('  ')).join('\n');
     return parseTeklaText(text);
   }
-  for(let i=hdr+1;i<aoa.length;i++){
+  return parseSheetWithMap(aoa, found.hdr, found.map);
+}
+function parseSheetWithMap(aoa, hdrRow, map){
+  const out = { rows:[], project:'', phase:'' };
+  for(let i=hdrRow+1;i<aoa.length;i++){
     const r=aoa[i]||[];
-    const profile=String(r[map.profile]===undefined?'':r[map.profile]).trim();
+    const profile=String(map.profile>=0 && r[map.profile]!==undefined ? r[map.profile] : '').trim();
     if(!profile) continue;
     if(/total/i.test(profile)) continue;
     const qty = map.qty>=0 ? num(r[map.qty]) : 1;
-    const len = num(r[map.length]);
+    const len = map.length>=0 ? num(r[map.length]) : 0;
     if(!qty) continue;
     const mass = map.mass>=0 ? num(r[map.mass]) : 0;
     const row = makeImportRow(profile, len, qty, map.material>=0?r[map.material]:'', mass);
@@ -3312,6 +3393,7 @@ function readFileAsArrayBuffer(file){
   return new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=()=>rej(new Error('Could not read that file.')); r.readAsArrayBuffer(file); });
 }
 async function handleTeklaFile(file){
+  suppressCloudRefresh(30000);
   const name = (file.name||'').toLowerCase();
   let parsed;
   try{
@@ -3422,9 +3504,17 @@ function renderImportPreview(){
       '<div class="table-scroll"><table class="imp-table"><thead><tr><th>Use</th><th>#</th><th>Profile</th><th>Length (mm)</th><th>Qty</th><th>Material</th><th>Mass/pc (kg)</th><th>Total (kg)</th><th>Type</th><th>Target Group</th></tr></thead><tbody>'+body+'</tbody></table></div>'+
       '<div class="imp-summary">Selected: '+t.count+' rows &nbsp;|&nbsp; '+fmt(t.pieces,0)+' pieces &nbsp;|&nbsp; '+fmt(t.mass,1)+' kg &nbsp;|&nbsp; '+t.groups.length+' group(s)</div>'+
     '</div>'+
-    '<div class="modal-foot">'+
+    '<div class="modal-foot" style="flex-wrap:wrap;">'+
       '<label class="inline-chk"><input type="radio" name="impMode" value="append" data-imp-mode '+(importUI.mode==='append'?'checked':'')+'> Add to existing groups</label>'+
       '<label class="inline-chk"><input type="radio" name="impMode" value="replace" data-imp-mode '+(importUI.mode==='replace'?'checked':'')+'> Replace all material groups</label>'+
+      '<label class="inline-chk" style="margin-left:14px;">Plates: <select class="f-select" data-imp-opt="plateMode" style="margin-left:4px;">'+
+        '<option value="pool" '+(importUI.plateMode==='pool'?'selected':'')+'>Pool by thickness</option>'+
+        '<option value="pieces" '+(importUI.plateMode==='pieces'?'selected':'')+'>Keep piece-level rows</option>'+
+      '</select></label>'+
+      '<label class="inline-chk">Profiles: <select class="f-select" data-imp-opt="profileMode" style="margin-left:4px;">'+
+        '<option value="group" '+(importUI.profileMode==='group'?'selected':'')+'>Group each profile into one row</option>'+
+        '<option value="cuts" '+(importUI.profileMode==='cuts'?'selected':'')+'>Keep each cut length separate</option>'+
+      '</select></label>'+
       '<div class="spacer"></div>'+
       '<button class="btn-ghost" data-action="close-import">Cancel</button>'+
       '<button class="btn btn-add" data-action="apply-import">Fill Requisition ('+t.count+' rows)</button>'+
@@ -3445,20 +3535,73 @@ function mergeImportRows(){
   });
   importUI.rows = Object.values(map);
 }
+/* Pool every selected plate/flat row by thickness (within the same target group). */
+function poolPlatesByThickness(rows){
+  const buckets = {};
+  rows.forEach(r=>{
+    const gname = (r.group||'IMPORTED ITEMS').trim().toUpperCase();
+    const t = r.plateT || 0;
+    const key = gname+'|'+t;
+    const b = buckets[key] || (buckets[key] = { group:gname, t:t, qty:0, mass:0, widths:{}, materials:{} });
+    b.qty += r.qty;
+    b.mass = round4(b.mass + r.massTotal);
+    if(r.plateW) b.widths[r.plateW]=true;
+    if(r.material) b.materials[r.material]=true;
+  });
+  return Object.values(buckets);
+}
+/* Group every selected section row by profile name (within the same target group), summing all cut lengths into one row. */
+function groupProfilesByName(rows){
+  const buckets = {};
+  rows.forEach(r=>{
+    const gname = (r.group||'IMPORTED ITEMS').trim().toUpperCase();
+    const key = gname+'|'+r.profile.trim().toUpperCase();
+    const b = buckets[key] || (buckets[key] = { group:gname, profile:r.profile, qty:0, lenM:0, mass:0, cuts:0, materials:{} });
+    b.qty += r.qty;
+    b.lenM = round4(b.lenM + (r.lengthMm/1000)*r.qty);
+    b.mass = round4(b.mass + r.massTotal);
+    b.cuts += 1;
+    if(r.material) b.materials[r.material]=true;
+  });
+  return Object.values(buckets);
+}
 function applyImport(){
   const sel = importUI.rows.filter(r=>r.include);
   if(!sel.length){ alert('Nothing selected to import.'); return; }
   if(importUI.mode==='replace' && !confirm('Replace every existing material group with the imported rows? This cannot be undone (export first if unsure).')) return;
   if(importUI.mode==='replace') state.materialGroups = [];
 
-  sel.forEach(r=>{
-    const gname = (r.group||'IMPORTED ITEMS').trim().toUpperCase();
+  const ensureGroup = (gname)=>{
     let g = state.materialGroups.find(x=>(x.name||'').trim().toUpperCase()===gname);
     if(!g){ g = { id:uid(), name:gname, rows:[] }; state.materialGroups.push(g); }
     // drop the untouched blank placeholder row a fresh group starts with
     g.rows = g.rows.filter(x=>rowDesc(x) || num(x.nos) || num(x.mass));
+    return g;
+  };
 
-    if(r.kind==='plate'){
+  const plateRows = sel.filter(r=>r.kind==='plate');
+  const sectionRows = sel.filter(r=>r.kind!=='plate');
+
+  if(importUI.plateMode==='pool'){
+    poolPlatesByThickness(plateRows).forEach(b=>{
+      const g = ensureGroup(b.group);
+      const widths = Object.keys(b.widths);
+      const materials = Object.keys(b.materials);
+      g.rows.push(blankMaterialRow({
+        kind:'plate', mode:'custom', category:'plates',
+        profile: b.t ? (b.t+'mm PLATE (pooled)') : 'PLATE (pooled)',
+        plateT: b.t ? String(b.t) : '',
+        plateW: widths.length===1 ? widths[0] : '',
+        unitOrderMass:'',
+        nos: String(b.qty), unit:'No',
+        remarks: 'Pooled '+fmt(b.qty,0)+' pcs, '+fmt(b.mass,1)+' kg total'+
+                 (widths.length>1?'; widths: '+widths.join(', ')+'mm':'')+
+                 (materials.length?'; Grade '+materials.join('/'):'')
+      }));
+    });
+  } else {
+    plateRows.forEach(r=>{
+      const g = ensureGroup((r.group||'IMPORTED ITEMS').trim().toUpperCase());
       g.rows.push(blankMaterialRow({
         kind:'plate', mode:'custom', category:'plates',
         profile: r.profile,
@@ -3469,7 +3612,27 @@ function applyImport(){
         nos: String(r.qty), unit:'No',
         remarks: r.material ? 'Grade '+r.material : ''
       }));
-    } else {
+    });
+  }
+
+  if(importUI.profileMode==='group'){
+    groupProfilesByName(sectionRows).forEach(b=>{
+      const g = ensureGroup(b.group);
+      const materials = Object.keys(b.materials);
+      g.rows.push(blankMaterialRow({
+        kind:'section', mode:'custom', category:'UB',
+        profile: b.profile,
+        nos: '1',
+        unitLength: b.lenM ? String(b.lenM) : '',
+        kgPerM: (b.lenM>0 && b.mass>0) ? String(round4(b.mass/b.lenM)) : '',
+        stdLength: b.lenM > 6 ? '12' : '6',
+        unit:'No',
+        remarks: fmt(b.qty,0)+' pcs in '+b.cuts+' cut length'+(b.cuts>1?'s':'')+(materials.length?'; Grade '+materials.join('/'):'')
+      }));
+    });
+  } else {
+    sectionRows.forEach(r=>{
+      const g = ensureGroup((r.group||'IMPORTED ITEMS').trim().toUpperCase());
       const lenM = round4(r.lengthMm/1000);
       g.rows.push(blankMaterialRow({
         kind:'section', mode:'custom', category:'UB',
@@ -3481,12 +3644,368 @@ function applyImport(){
         unit:'No',
         remarks: r.material ? 'Grade '+r.material : ''
       }));
-    }
-  });
+    });
+  }
+
   state.materialGroups.forEach(g=>{ if(!g.rows.length) g.rows.push(blankMaterialRow()); });
   if(!state.materialGroups.length) state.materialGroups.push(blankGroup('IMPORTED ITEMS'));
   importUI.open=false; renderImportModal();
   saveState(); rerender();
+}
+
+/* ================= COUNTER CHECK (Quote PDF vs Tekla) ================= */
+function numC(v){ const n=parseFloat(String(v||'').replace(/,/g,'')); return isFinite(n)?n:0; }
+
+async function extractPdfLines(file){
+  if(typeof pdfjsLib==='undefined') throw new Error('The PDF reader library did not load. Check your internet connection and try again.');
+  if(pdfjsLib.GlobalWorkerOptions && !pdfjsLib.GlobalWorkerOptions.workerSrc){
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  }
+  const buf = await readFileAsArrayBuffer(file);
+  const pdf = await pdfjsLib.getDocument({data:buf}).promise;
+  const lines=[];
+  const Y_TOL = 2.0;      // items within this many PDF units of vertical baseline are treated as the same visual row
+  const GAP_THRESHOLD = 6; // a horizontal gap bigger than this (points) signals a new table cell, not a word-space
+  for(let p=1;p<=pdf.numPages;p++){
+    const page = await pdf.getPage(p);
+    const content = await page.getTextContent();
+    // Whitespace-run items report unreliable/stretched widths (justified table columns), which corrupts
+    // gap tracking if included - so gaps are measured purely between real content items.
+    const items = content.items
+      .filter(it=>(it.str||'').trim()!=='')
+      .map(it=>({ str: it.str, x: it.transform[4], y: it.transform[5], w: it.width||0 }));
+    let curLine='', curY=null, prevEndX=null;
+    items.forEach(it=>{
+      const sameY = curY!==null && Math.abs(it.y-curY)<=Y_TOL;
+      const gap = prevEndX!==null ? (it.x-prevEndX) : 0;
+      const continuesLine = sameY && gap<=GAP_THRESHOLD;
+      if(!continuesLine){
+        if(curLine.trim()) lines.push(curLine.trim());
+        curLine = it.str;
+      } else {
+        curLine += (curLine.trim() ? ' ' : '') + it.str;
+      }
+      curY = it.y;
+      prevEndX = it.x + it.w;
+    });
+    if(curLine.trim()) lines.push(curLine.trim());
+  }
+  return lines;
+}
+
+const QUOTE_UNIT_RE = /^(Kgs?|SM|LM|No|Item|Sm|Nos|Tonne|Day|L)$/i;
+const QUOTE_NUM_RE = /^[\d,]+\.?\d*$/;
+const QUOTE_PROFILE_PREFIX_RE = /^(IPE|UB|UC|UKB|UKC|HEA|HEB|HEM|RHS|SHS|CHS|RSA|RSC|RSJ|PFC|Channel|Black\s*Pipes?|Angle|Flat|Plate|PLT|PL\d|LGS|Pipe|Round|ROD|Z\s?\d|Zed|Girder|Purlin)/i;
+const QUOTE_SECTION_LABEL_RE = /^(#|DESCRIPTION|PROFILE|DIMENSIONS|KG\/M|UN|QTY|RATE|AMT|NOS|LEN|TOT ?M|STEEL ITEMS|Auxillary|Auxiliary|Paint.*|Clear Area ROOFING)$/i;
+const QUOTE_SUMMARY_LABEL_RE = /^(Steel Sub-total|MS Connections.*|Total for Steel|SUB[ -]?TOTAL|ADD 16% VAT|GRAND TOTAL.*)$/i;
+
+function parseQuoteLines(lines){
+  let idx=0, currentSheet='';
+  const rows=[];
+  while(idx<lines.length){
+    const line=lines[idx];
+    if(/^SHEET\s+\d+/i.test(line)){
+      const parts=line.split(/—|-/);
+      currentSheet = parts.length>1 ? parts.slice(1).join('-').trim() : line;
+      idx++; continue;
+    }
+    if(QUOTE_SECTION_LABEL_RE.test(line)){ idx++; continue; }
+    if(QUOTE_SUMMARY_LABEL_RE.test(line)){ idx+=2; continue; }
+    if(/^\d+$/.test(line)){
+      const startIdx = idx;
+      idx++;
+      const buf=[]; let guard=0;
+      while(idx<lines.length && !QUOTE_UNIT_RE.test(lines[idx]) && guard<40){ buf.push(lines[idx]); idx++; guard++; }
+      if(idx>=lines.length){ idx=startIdx+1; continue; }
+      if(!QUOTE_UNIT_RE.test(lines[idx])){
+        // Could not find a unit token within a reasonable span - this wasn't a real item row
+        // (e.g. a stray number in running text). Don't misparse it; just skip past the row number.
+        idx = startIdx+1;
+        continue;
+      }
+      const unit=lines[idx]; idx++;
+      const qtyStr=lines[idx]||''; idx++;
+      const rateStr=lines[idx]||''; idx++;
+      const amtStr=lines[idx]||''; idx++;
+      const dims=[];
+      while(buf.length && dims.length<4 && QUOTE_NUM_RE.test(buf[buf.length-1])){ dims.unshift(buf.pop()); }
+      let nos=0,len=0,totm=0,kgm=0;
+      if(dims.length===4){ nos=numC(dims[0]); len=numC(dims[1]); totm=numC(dims[2]); kgm=numC(dims[3]); }
+      else if(dims.length===1){ kgm=numC(dims[0]); }
+      else if(dims.length>0){
+        const order=['nos','len','totm','kgm'].slice(4-dims.length);
+        dims.forEach((v,i)=>{ if(order[i]==='nos')nos=numC(v); else if(order[i]==='len')len=numC(v); else if(order[i]==='totm')totm=numC(v); else kgm=numC(v); });
+      }
+      let profile='', description='', pIdx=-1;
+      for(let i=buf.length-1;i>=0;i--){
+        if(buf[i]==='—' || buf[i]==='-'){ pIdx=i; break; }
+        if(QUOTE_PROFILE_PREFIX_RE.test(buf[i])){ pIdx=i; break; }
+      }
+      if(pIdx>=0){ profile=buf.slice(pIdx).join(' '); description=buf.slice(0,pIdx).join(' '); }
+      else { description=buf.join(' '); }
+      if(/^plate\s*x\s*\d+\s*nos?\.?$/i.test(profile.trim())){ description = (description+' '+profile).trim(); profile=''; }
+      const unitNorm=(unit||'').toLowerCase();
+      const massTotal = /^kgs?$/.test(unitNorm) ? numC(qtyStr) : 0;
+      rows.push({ id:uid(), group:currentSheet, profile, description, nos, len, totm, kgm, unit, qty:numC(qtyStr), rate:numC(rateStr), amt:numC(amtStr), massTotal, pieces: nos||0 });
+      continue;
+    }
+    idx++;
+  }
+  return rows;
+}
+
+const CC_SINGLE_DIM_FAMILIES = new Set(['IPE','UB','UC','UKB','UKC','HEA','HEB','HEM','ROD','RB','PIPE','RSJ']);
+const CC_FAMILY_ALIAS = { 'C':'CHANNEL','PFC':'CHANNEL','CFLC':'CHANNEL','CFC':'CHANNEL','CLC':'CHANNEL','CHANNEL':'CHANNEL','RSC':'CHANNEL',
+  'L':'ANGLE','RSA':'ANGLE','ANGLE':'ANGLE', 'ROD':'ROUND','RB':'ROUND','ROUND':'ROUND',
+  'PLT':'PLATE','PL':'PLATE','PLATE':'PLATE','FL':'FLAT','FLAT':'FLAT' };
+function normalizeProfileKey(s){
+  let t = String(s||'').toUpperCase();
+  if(!t.trim() || t==='—' || t==='-') return '';
+  t = t.replace(/\(EQUAL\)/g,'').replace(/BLACK\s*PIPES?.*?OD\s*/,'PIPE ');
+  const famM = t.match(/[A-Z]+/);
+  let family = famM ? famM[0] : 'OTHER';
+  family = CC_FAMILY_ALIAS[family] || family;
+  const nums = (t.match(/\d+(\.\d+)?/g)||[]).map(n=>String(parseFloat(n)));
+  const dimCount = CC_SINGLE_DIM_FAMILIES.has(family) ? 1 : 2;
+  const dims = nums.slice(0,dimCount).join('X');
+  return family + (dims?('-'+dims):'');
+}
+
+async function handleCounterCheckPdf(file){
+  suppressCloudRefresh(30000);
+  let lines, rows;
+  try{
+    lines = await extractPdfLines(file);
+    rows = parseQuoteLines(lines);
+  }catch(err){
+    alert((err && err.message) || 'Could not read that PDF.');
+    return;
+  }
+  if(!rows.length){
+    alert('No item rows were recognised in "'+file.name+'".\n\nThis reader expects a Ropa-style steel quotation with # / Description / Profile / Dimensions / Kg/m / Un / Qty / Rate / Amt columns.');
+    return;
+  }
+  state.counterCheck.quote.imports.push({ id:uid(), source:file.name, rows });
+  saveState(); rerender();
+}
+async function handleCounterCheckTekla(file){
+  suppressCloudRefresh(30000);
+  const name=(file.name||'').toLowerCase();
+  try{
+    if(/\.(xlsx|xls)$/.test(name)){
+      if(typeof XLSX==='undefined') throw new Error('The Excel reader library did not load. Check your internet connection and try again.');
+      const buf = await readFileAsArrayBuffer(file);
+      const wb = XLSX.read(buf, {type:'array'});
+      const sheets = wb.SheetNames.map(sn=>({ name:sn, aoa: XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,raw:true,defval:''}) }));
+      let best=null, bestIdx=-1;
+      sheets.forEach((sh,i)=>{ const p=parseTeklaSheet(sh.aoa); if(!best||p.rows.length>best.rows.length){ best=p; bestIdx=i; } });
+      if(best && best.rows.length){
+        commitCounterCheckImport('tekla', file.name, best.rows);
+      } else {
+        openCcMapModal(file.name, sheets);
+      }
+      return;
+    }
+    if(/\.csv$/.test(name)){
+      if(typeof XLSX==='undefined') throw new Error('The Excel reader library did not load. Check your internet connection and try again.');
+      const text = await readFileAsText(file);
+      const wb = XLSX.read(text, {type:'string'});
+      const sheets = wb.SheetNames.map(sn=>({ name:sn, aoa: XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,raw:true,defval:''}) }));
+      const parsed = parseTeklaSheet(sheets[0].aoa);
+      if(parsed.rows.length){ commitCounterCheckImport('tekla', file.name, parsed.rows); }
+      else { openCcMapModal(file.name, sheets); }
+      return;
+    }
+    let parsed;
+    if(/\.docx$/.test(name)){
+      parsed = parseTeklaText(await readDocxText(file));
+    } else if(/\.doc$/.test(name)){
+      throw new Error('Old .doc format is not readable in the browser. Please re-save it as .docx, .txt or .xlsx.');
+    } else {
+      parsed = parseTeklaText(await readFileAsText(file));
+    }
+    if(!parsed.rows.length){ alert('No material rows were recognised in "'+file.name+'".'); return; }
+    commitCounterCheckImport('tekla', file.name, parsed.rows);
+  }catch(err){
+    alert((err && err.message) || 'Could not read that file.');
+  }
+}
+function commitCounterCheckImport(side, source, rawRows){
+  const rows = rawRows.map(r=>({ id:r.id||uid(), group:r.group, profile:r.profile, massTotal:r.massTotal, pieces:r.qty!==undefined?r.qty:r.pieces, lengthMm:r.lengthMm }));
+  state.counterCheck[side].imports.push({ id:uid(), source, rows });
+  saveState(); rerender();
+}
+
+/* ---- manual column-mapping fallback for spreadsheets the auto-detector can't read ---- */
+const ccMapUI = { open:false, fileName:'', sheets:[], sheetIdx:0, map:{profile:-1,length:-1,qty:-1,material:-1,mass:-1} };
+function openCcMapModal(fileName, sheets){
+  ccMapUI.open = true;
+  ccMapUI.fileName = fileName;
+  ccMapUI.sheets = sheets;
+  // pick the sheet with the most non-empty rows as the initial guess
+  let bestIdx=0, bestLen=-1;
+  sheets.forEach((s,i)=>{ if(s.aoa.length>bestLen){ bestLen=s.aoa.length; bestIdx=i; } });
+  ccMapUI.sheetIdx = bestIdx;
+  const guess = detectSheetHeader(sheets[bestIdx].aoa);
+  ccMapUI.headerRow = guess ? guess.hdr : 0;
+  ccMapUI.map = guess ? Object.assign({profile:-1,length:-1,qty:-1,material:-1,mass:-1}, guess.map) : {profile:-1,length:-1,qty:-1,material:-1,mass:-1};
+  renderCcMapModal();
+}
+function ccMapHeaderRowCells(){
+  const sheet = ccMapUI.sheets[ccMapUI.sheetIdx];
+  if(!sheet) return [];
+  return sheet.aoa[ccMapUI.headerRow] || [];
+}
+function renderCcMapModal(){
+  const host = document.getElementById('ccMapModal');
+  if(!ccMapUI.open){ host.className='modal-back hidden'; host.innerHTML=''; return; }
+  const sheet = ccMapUI.sheets[ccMapUI.sheetIdx];
+  const headerCells = ccMapHeaderRowCells();
+  const colOptions = (selected)=>{
+    let opts = '<option value="-1"'+(selected===-1?' selected':'')+'>- not in this sheet -</option>';
+    headerCells.forEach((c,i)=>{
+      const label = (c===undefined||c===null||String(c).trim()==='') ? ('Column '+(i+1)) : String(c).trim();
+      opts += '<option value="'+i+'"'+(selected===i?' selected':'')+'>'+esc(label)+' (col '+(i+1)+')</option>';
+    });
+    return opts;
+  };
+  // preview: header row + next 5 data rows, only columns that exist
+  const previewRows = [ccMapUI.headerRow].concat([1,2,3,4,5].map(o=>ccMapUI.headerRow+o)).filter(i=>sheet.aoa[i]);
+  const maxCols = Math.max(headerCells.length, 1);
+  const previewHtml = previewRows.map(ri=>{
+    const row = sheet.aoa[ri]||[];
+    const cells = [];
+    for(let c=0;c<maxCols;c++) cells.push('<td>'+esc(row[c]===undefined||row[c]===null?'':String(row[c]))+'</td>');
+    return '<tr class="'+(ri===ccMapUI.headerRow?'sum-row':'')+'">'+cells.join('')+'</tr>';
+  }).join('');
+
+  host.className='modal-back';
+  host.innerHTML = '<div class="modal">'+
+    '<div class="modal-head"><h2>Map columns - '+esc(ccMapUI.fileName)+'</h2><div class="spacer"></div><button class="btn-ghost" data-action="close-ccmap">Close</button></div>'+
+    '<div class="modal-body">'+
+      '<p class="imp-note">This sheet did not match the usual Tekla column names automatically. Pick which sheet and which row is the header, then tell us which column is which - the same way you would read it yourself.</p>'+
+      (ccMapUI.sheets.length>1 ? '<label style="display:block; margin-bottom:10px; font-size:12.5px; font-weight:600; color:var(--steel);">Sheet<select class="f-select" data-ccmap="sheetIdx" style="display:block; margin-top:4px;">'+ccMapUI.sheets.map((s,i)=>'<option value="'+i+'" '+(i===ccMapUI.sheetIdx?'selected':'')+'>'+esc(s.name)+' ('+s.aoa.length+' rows)</option>').join('')+'</select></label>' : '')+
+      '<label style="display:block; margin-bottom:14px; font-size:12.5px; font-weight:600; color:var(--steel);">Header row (row that contains the column titles)<input type="number" min="0" class="f-num" data-ccmap="headerRow" value="'+ccMapUI.headerRow+'" style="display:block; margin-top:4px; max-width:120px;"></label>'+
+      '<div class="table-scroll" style="max-height:180px; margin-bottom:16px;"><table class="imp-table"><tbody>'+previewHtml+'</tbody></table></div>'+
+      '<div class="ins-grid">'+
+        '<label>Profile / Section column (required)<select class="f-select" data-ccmap-col="profile">'+colOptions(ccMapUI.map.profile)+'</select></label>'+
+        '<label>Length (mm) column<select class="f-select" data-ccmap-col="length">'+colOptions(ccMapUI.map.length)+'</select></label>'+
+        '<label>Quantity / No. column<select class="f-select" data-ccmap-col="qty">'+colOptions(ccMapUI.map.qty)+'</select></label>'+
+        '<label>Material / Grade column<select class="f-select" data-ccmap-col="material">'+colOptions(ccMapUI.map.material)+'</select></label>'+
+        '<label>Mass / Weight column<select class="f-select" data-ccmap-col="mass">'+colOptions(ccMapUI.map.mass)+'</select></label>'+
+      '</div>'+
+      '<p class="imp-col-hint">At minimum a Profile column is required. If Length and Mass are both mapped, kg/m is derived automatically the same way as the automatic importer. Leave Quantity unmapped to treat every row as 1 piece.</p>'+
+    '</div>'+
+    '<div class="modal-foot"><div class="spacer"></div><button class="btn-ghost" data-action="close-ccmap">Cancel</button><button class="btn btn-add" data-action="apply-ccmap">Extract rows</button></div>'+
+  '</div>';
+}
+function applyCcMap(){
+  if(ccMapUI.map.profile<0){ alert('Please choose a Profile / Section column - this reader needs at least that to identify each row.'); return; }
+  const sheet = ccMapUI.sheets[ccMapUI.sheetIdx];
+  const parsed = parseSheetWithMap(sheet.aoa, ccMapUI.headerRow, ccMapUI.map);
+  if(!parsed.rows.length){ alert('No rows were found below the header row with data in the Profile column you selected. Double check the header row number and column choices.'); return; }
+  commitCounterCheckImport('tekla', ccMapUI.fileName, parsed.rows);
+  ccMapUI.open=false; renderCcMapModal();
+}
+
+function ccAllRows(side){
+  const imports = (state.counterCheck[side]||{}).imports || [];
+  return imports.reduce((acc,im)=>acc.concat((im.rows||[]).map(r=>Object.assign({},r,{__source:im.source}))),[]);
+}
+function ccTotals(side){
+  const rows = ccAllRows(side);
+  return { count: rows.length, mass: rows.reduce((s,r)=>s+num(r.massTotal),0), pieces: rows.reduce((s,r)=>s+num(r.pieces),0) };
+}
+function buildCounterCheckComparison(){
+  const quoteRows = ccAllRows('quote');
+  const teklaRows = ccAllRows('tekla');
+  const map = {};
+  quoteRows.forEach(r=>{
+    const key = normalizeProfileKey(r.profile) || ('DESC:'+(r.description||'').trim().toUpperCase().slice(0,40));
+    if(!map[key]) map[key] = { key, quoteMass:0, quotePieces:0, quoteLabels:new Set(), teklaMass:0, teklaPieces:0, teklaLabels:new Set() };
+    map[key].quoteMass += num(r.massTotal);
+    map[key].quotePieces += num(r.pieces);
+    map[key].quoteLabels.add((r.profile||'').trim() || (r.description||'').trim().slice(0,40));
+  });
+  teklaRows.forEach(r=>{
+    const key = normalizeProfileKey(r.profile) || ('OTHER:'+(r.profile||'').trim());
+    if(!map[key]) map[key] = { key, quoteMass:0, quotePieces:0, quoteLabels:new Set(), teklaMass:0, teklaPieces:0, teklaLabels:new Set() };
+    map[key].teklaMass += num(r.massTotal);
+    map[key].teklaPieces += num(r.pieces);
+    map[key].teklaLabels.add((r.profile||'').trim());
+  });
+  const list = Object.values(map).map(row=>{
+    const diff = row.quoteMass - row.teklaMass;
+    const base = Math.max(row.quoteMass, row.teklaMass, 1);
+    const diffPct = (diff/base)*100;
+    let status;
+    if(row.quoteMass>0 && row.teklaMass===0) status='quote-only';
+    else if(row.teklaMass>0 && row.quoteMass===0) status='tekla-only';
+    else if(Math.abs(diffPct)<=3) status='match';
+    else if(Math.abs(diffPct)<=10) status='warn';
+    else status='bad';
+    return Object.assign(row,{diff,diffPct,status});
+  });
+  list.sort((a,b)=>Math.abs(b.diff)-Math.abs(a.diff));
+  return list;
+}
+function ccBadge(status){
+  const map = { match:['ok','Match'], warn:['warn','Check'], bad:['bad','Mismatch'], 'quote-only':['only','Quote only'], 'tekla-only':['only','Tekla only'] };
+  const [cls,label] = map[status]||['only',status];
+  return '<span class="cc-badge '+cls+'">'+label+'</span>';
+}
+function ccImportListHtml(side){
+  const imports = (state.counterCheck[side]||{}).imports || [];
+  if(!imports.length) return '<div class="cc-stat">No files imported yet.</div>';
+  return imports.map(im=>{
+    const mass = (im.rows||[]).reduce((s,r)=>s+num(r.massTotal),0);
+    return '<div class="cc-stat" style="display:flex; align-items:center; gap:8px; justify-content:space-between; border:1px solid var(--line); border-radius:6px; padding:5px 9px; margin-top:6px; background:#fff;">'+
+      '<span><b>'+esc(im.source)+'</b> - '+(im.rows||[]).length+' rows, '+fmt(mass,1)+' kg</span>'+
+      '<button class="btn-icon" data-action="remove-cc-import" data-side="'+side+'" data-id="'+im.id+'" title="Remove this import">x</button></div>';
+  }).join('');
+}
+function renderCounterCheckPage(){
+  const qt = ccTotals('quote'), tk = ccTotals('tekla');
+  const qImports = state.counterCheck.quote.imports||[], tImports = state.counterCheck.tekla.imports||[];
+  const sides = '<div class="cc-grid">'+
+    '<div class="cc-side"><h3>📄 Quote (PDF)</h3><div class="cc-sub">Import one or more Ropa steel quotation PDFs to extract profile, quantity and mass per line item. Each import adds to the total below - use this to combine several sheets or revisions.</div>'+
+      '<label class="btn btn-add" for="ccQuoteFile" style="display:inline-block;">+ Add Quote PDF</label>'+
+      '<input type="file" id="ccQuoteFile" accept=".pdf" style="display:none;">'+
+      ccImportListHtml('quote')+
+      (qImports.length?'<div class="cc-stat" style="margin-top:8px;">Combined: <b>'+qt.count+'</b> rows &nbsp;|&nbsp; <b>'+fmt(qt.mass,1)+' kg</b></div>':'')+
+    '</div>'+
+    '<div class="cc-side"><h3>🔧 Tekla Material List</h3><div class="cc-sub">Import one or more Tekla material/part lists (Excel, CSV, Word or .xsr report) for the same structure. Each import adds to the total below.</div>'+
+      '<label class="btn btn-add" for="ccTeklaFile" style="display:inline-block;">+ Add Tekla List</label>'+
+      '<input type="file" id="ccTeklaFile" accept=".xsr,.txt,.rpt,.csv,.xls,.xlsx,.doc,.docx" style="display:none;">'+
+      ccImportListHtml('tekla')+
+      (tImports.length?'<div class="cc-stat" style="margin-top:8px;">Combined: <b>'+tk.count+'</b> rows &nbsp;|&nbsp; <b>'+fmt(tk.mass,1)+' kg</b></div>':'')+
+    '</div>'+
+  '</div>';
+
+  if(!qImports.length && !tImports.length){
+    return '<div class="card"><div class="card-head"><h2>Counter Check</h2></div><div class="pitch">Import a quote (as sent to the client) and the Tekla material take-off for the same structure side by side. You can add several files to either side - e.g. a quote per building plus a separate Tekla export per phase - and they will all be combined before comparing. Matching is by profile family and primary dimension - e.g. all RHS 125x75 rows are grouped together regardless of small wording differences - so treat this as a sanity check on total mass per profile, not a line-by-line audit. Where a profile only appears on one side, or the two totals disagree by more than 10%, it is flagged for a closer look.</div>'+sides+'</div>';
+  }
+
+  const comparison = buildCounterCheckComparison();
+  const totalQuoteMass = comparison.reduce((s,r)=>s+r.quoteMass,0);
+  const totalTeklaMass = comparison.reduce((s,r)=>s+r.teklaMass,0);
+  const flagged = comparison.filter(r=>r.status==='bad'||r.status==='warn'||r.status==='quote-only'||r.status==='tekla-only').length;
+
+  const rowsHtml = comparison.map(r=>{
+    const qLabels = [...r.quoteLabels].filter(Boolean).join(', ');
+    const tLabels = [...r.teklaLabels].filter(Boolean).join(', ');
+    return '<tr><td><b>'+esc(r.key)+'</b>'+(qLabels?'<span class="cc-src">Quote: '+esc(qLabels)+'</span>':'')+(tLabels?'<span class="cc-src">Tekla: '+esc(tLabels)+'</span>':'')+'</td>'+
+      '<td class="n">'+(r.quoteMass?fmt(r.quoteMass,1):'-')+'</td>'+
+      '<td class="n">'+(r.teklaMass?fmt(r.teklaMass,1):'-')+'</td>'+
+      '<td class="n">'+(r.diff?((r.diff>0?'+':'')+fmt(r.diff,1)):'-')+'</td>'+
+      '<td class="n">'+((r.quoteMass||r.teklaMass)?((r.diffPct>0?'+':'')+fmt(r.diffPct,1)+'%'):'-')+'</td>'+
+      '<td>'+ccBadge(r.status)+'</td></tr>';
+  }).join('');
+
+  return '<div class="card"><div class="card-head"><h2>Counter Check</h2></div><div class="pitch">Import a quote (as sent to the client) and the Tekla material take-off for the same structure side by side. Add as many files as you need to either side - they combine before comparing. Matching is by profile family and primary dimension, so treat this as a sanity check on total mass per profile, not a line-by-line audit.</div>'+sides+
+    '<div class="cc-stat" style="font-size:13.5px; margin:14px 0 6px;">Quote total: <b>'+fmt(totalQuoteMass,1)+' kg</b> &nbsp;|&nbsp; Tekla total: <b>'+fmt(totalTeklaMass,1)+' kg</b> &nbsp;|&nbsp; Overall diff: <b>'+((totalQuoteMass-totalTeklaMass)>=0?'+':'')+fmt(totalQuoteMass-totalTeklaMass,1)+' kg</b> &nbsp;|&nbsp; <span style="color:'+(flagged?'var(--danger)':'#1E7A34')+';">'+flagged+' row(s) flagged</span></div>'+
+    '<div class="table-scroll"><table class="cc-table"><thead><tr><th>Profile Group</th><th>Quote Mass (kg)</th><th>Tekla Mass (kg)</th><th>Diff (kg)</th><th>Diff %</th><th>Status</th></tr></thead><tbody>'+(rowsHtml||'<tr><td colspan="6" class="empty-row">Nothing to compare yet.</td></tr>')+'</tbody></table></div>'+
+  '</div>';
 }
 
 /* ============================ EVENTS ============================ */
@@ -3510,7 +4029,7 @@ document.addEventListener('input', e=>{
       }
       if(t.dataset.field==='mode' && t.value==='catalog' && !CATALOG[r.category]) r.category = r.kind==='plate'?'plates':'UB';
       if(t.dataset.field==='category') r.sizeIdx=0;
-      if(t.tagName==='SELECT' || t.type==='checkbox'){ saveState(); rerender(); }
+      if(t.tagName==='SELECT' || t.type==='checkbox' || t.type==='color'){ saveState(); rerender(); }
       else { saveLocalOnly(); }
     }
     return;
@@ -3523,7 +4042,7 @@ document.addEventListener('input', e=>{
     if(g){
       const r=g.rows[+gtr.dataset.grow];
       r[t.dataset.gfield]=t.type==='checkbox'?t.checked:t.value;
-      if(t.tagName==='SELECT' || t.type==='checkbox'){ saveState(); rerender(); } else { saveLocalOnly(); }
+      if(t.tagName==='SELECT' || t.type==='checkbox' || t.type==='color'){ saveState(); rerender(); } else { saveLocalOnly(); }
     }
     return;
   }
@@ -3531,7 +4050,7 @@ document.addEventListener('input', e=>{
     const p=state.paintRows.find(x=>x.id===t.dataset.paint);
     if(p){
       p[t.dataset.pfield]=t.type==='checkbox'?t.checked:t.value;
-      if(t.type==='checkbox'){ saveState(); rerender(); }
+      if(t.type==='checkbox' || t.type==='color'){ saveState(); rerender(); }
       else { saveLocalOnly(); }
     }
     return;
@@ -3560,7 +4079,7 @@ document.addEventListener('input', e=>{
     const r=(state.installer.items||[]).find(x=>x.id===itr.dataset.irow);
     if(r){
       r[t.dataset.ifield]=t.type==='checkbox'?t.checked:t.value;
-      if(t.tagName==='SELECT' || t.type==='checkbox' || ['totalQty','qtyDone','rate'].includes(t.dataset.ifield)){ saveState(); rerender(); }
+      if(t.tagName==='SELECT' || t.type==='checkbox' || t.type==='color' || ['totalQty','qtyDone','rate'].includes(t.dataset.ifield)){ saveState(); rerender(); }
       else saveLocalOnly();
     }
     return;
@@ -3570,7 +4089,7 @@ document.addEventListener('input', e=>{
     const d=(state.installer.deductions||[]).find(x=>x.id===dtr.dataset.drow);
     if(d){
       d[t.dataset.dfield]=t.type==='checkbox'?t.checked:t.value;
-      if(t.dataset.dfield==='amount' || t.type==='checkbox'){ saveState(); rerender(); } else saveLocalOnly();
+      if(t.dataset.dfield==='amount' || t.type==='checkbox' || t.type==='color'){ saveState(); rerender(); } else saveLocalOnly();
     }
     return;
   }
@@ -3586,6 +4105,28 @@ document.addEventListener('input', e=>{
     return;
   }
   if(t.dataset.impMode!==undefined && t.checked){ importUI.mode=t.value; return; }
+  if(t.dataset.impOpt==='plateMode'){ importUI.plateMode=t.value; return; }
+  if(t.dataset.impOpt==='profileMode'){ importUI.profileMode=t.value; return; }
+});
+document.addEventListener('change', e=>{
+  const t=e.target;
+  if(t.dataset.impOpt==='plateMode'){ importUI.plateMode=t.value; return; }
+  if(t.dataset.impOpt==='profileMode'){ importUI.profileMode=t.value; return; }
+  if(t.dataset.ccmap==='sheetIdx'){
+    ccMapUI.sheetIdx = +t.value;
+    const guess = detectSheetHeader(ccMapUI.sheets[ccMapUI.sheetIdx].aoa);
+    ccMapUI.headerRow = guess ? guess.hdr : 0;
+    ccMapUI.map = guess ? Object.assign({profile:-1,length:-1,qty:-1,material:-1,mass:-1}, guess.map) : {profile:-1,length:-1,qty:-1,material:-1,mass:-1};
+    renderCcMapModal(); return;
+  }
+  if(t.dataset.ccmap==='headerRow'){
+    ccMapUI.headerRow = Math.max(0, parseInt(t.value,10)||0);
+    renderCcMapModal(); return;
+  }
+  if(t.dataset.ccmapCol){
+    ccMapUI.map[t.dataset.ccmapCol] = parseInt(t.value,10);
+    return;
+  }
 });
 document.addEventListener('change', e=>{
   const t=e.target;
@@ -3596,6 +4137,23 @@ document.addEventListener('change', e=>{
 document.addEventListener('click', e=>{
   const b=e.target.closest('button[data-action]'); if(!b) return; const ds=b.dataset;
   switch(ds.action){
+    case 'switch-tab': state.activeTab = ds.tab; saveLocalOnly(); rerender(); break;
+    case 'clear-cc': if(ds.side==='quote') state.counterCheck.quote=blankCounterCheckSide(); else if(ds.side==='tekla') state.counterCheck.tekla=blankCounterCheckSide(); saveState(); rerender(); break;
+    case 'remove-cc-import': {
+      const side = state.counterCheck[ds.side];
+      if(side) side.imports = (side.imports||[]).filter(im=>im.id!==ds.id);
+      saveState(); rerender(); break;
+    }
+    case 'close-ccmap': ccMapUI.open=false; renderCcMapModal(); break;
+    case 'apply-ccmap': applyCcMap(); break;
+    case 'clear-row-color': {
+      if(ds.scope==='material'){ const g=state.materialGroups.find(x=>x.id===ds.group); if(g&&g.rows[+ds.row]) g.rows[+ds.row].color=''; }
+      else if(ds.scope==='general'){ const g=(state.generalGroups||[]).find(x=>x.id===ds.ggroup); if(g&&g.rows[+ds.grow]) g.rows[+ds.grow].color=''; }
+      else if(ds.scope==='paint'){ const p=state.paintRows.find(x=>x.id===ds.paint); if(p) p.color=''; }
+      else if(ds.scope==='ins-item'){ const r=(state.installer.items||[]).find(x=>x.id===ds.id); if(r) r.color=''; }
+      else if(ds.scope==='ins-ded'){ const d=(state.installer.deductions||[]).find(x=>x.id===ds.id); if(d) d.color=''; }
+      saveState(); rerender(); break;
+    }
     case 'new': if(confirm('Start a new blank requisition? Unsaved changes in this one will be lost (export first if needed).')){ state=defaultState(); saveState(); rerender(); } break;
     case 'export': { const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=(state.meta.refNo||'ropa-requisition')+'.json'; a.click(); break; }
     case 'export-xlsx': exportXLSX(); break;
@@ -3637,6 +4195,14 @@ document.addEventListener('change', e=>{
   if(e.target.id==='impFileExcel' || e.target.id==='impFileWord'){
     const file=e.target.files[0]; if(!file) return;
     handleTeklaFile(file).finally(()=>{ e.target.value=''; });
+  }
+  if(e.target.id==='ccQuoteFile'){
+    const file=e.target.files[0]; if(!file) return;
+    handleCounterCheckPdf(file).finally(()=>{ e.target.value=''; });
+  }
+  if(e.target.id==='ccTeklaFile'){
+    const file=e.target.files[0]; if(!file) return;
+    handleCounterCheckTekla(file).finally(()=>{ e.target.value=''; });
   }
 });
 document.getElementById('importFile').addEventListener('change', e=>{
@@ -3861,7 +4427,20 @@ async function openCloudReq(id,opts){ opts=opts||{}; if(!cloud.client) return; t
 function newCloudReq(){ state=defaultState(); saveState(); localStorage.setItem(LAST_REQ_KEY,state.id); cloud.panelOpen=false; rerender(); }
 async function deleteCloudReq(id){ if(!cloud.client) return; if(!confirm('Delete this requisition from the cloud? This cannot be undone.')) return; try{ const {error}=await cloud.client.from(TABLE).delete().eq('id',id); if(error) throw error; cloud.list=cloud.list.filter(q=>q.id!==id); if(state.id===id){ newCloudReq(); return; } }catch(e){ alert('Could not delete: '+((e&&e.message)||e)); } rerenderCloud(); }
 function toggleCloudPanel(){ cloud.panelOpen=!cloud.panelOpen; if(cloud.panelOpen&&cloud.client) fetchReqList(); rerenderCloud(); }
-async function refreshCurrentFromCloud(){ if(!cloud.client || cloudSaveTimer) return; try{ const {data,error}=await cloud.client.from(TABLE).select('data').eq('id',state.id).single(); if(error||!data||!data.data) return; const remote=JSON.stringify(data.data); if(remote!==JSON.stringify(state)){ const active=document.activeElement; const typing=active&&active.matches&&active.matches('.f-text, .f-num, input, select, textarea'); if(!typing){ state=migrateState(data.data); rerender(); } } }catch(e){} }
+let suppressCloudRefreshUntil = 0;
+function suppressCloudRefresh(ms){ suppressCloudRefreshUntil = Date.now() + (ms||20000); }
+document.addEventListener('click', e=>{
+  const lbl = e.target.closest('label[for]');
+  if(lbl && document.getElementById(lbl.getAttribute('for'))){
+    const forEl = document.getElementById(lbl.getAttribute('for'));
+    if(forEl && forEl.type==='file') suppressCloudRefresh(20000);
+  }
+  if(e.target.closest('input[type=file]')) suppressCloudRefresh(20000);
+}, true);
+document.addEventListener('change', e=>{
+  if(e.target && e.target.type==='file') suppressCloudRefresh(15000);
+}, true);
+async function refreshCurrentFromCloud(){ if(!cloud.client || cloudSaveTimer || Date.now()<suppressCloudRefreshUntil) return; try{ const {data,error}=await cloud.client.from(TABLE).select('data').eq('id',state.id).single(); if(error||!data||!data.data) return; const remote=JSON.stringify(data.data); if(remote!==JSON.stringify(state)){ const active=document.activeElement; const typing=active&&active.matches&&active.matches('.f-text, .f-num, input, select, textarea'); if(!typing){ state=migrateState(data.data); rerender(); } } }catch(e){} }
 window.addEventListener('focus',()=>{ if(cloud.client) refreshCurrentFromCloud(); });
 document.addEventListener('visibilitychange',()=>{ if(!document.hidden&&cloud.client) refreshCurrentFromCloud(); });
 function cloudStatusLabel(){ switch(cloud.status){ case 'connected': case 'saved': return {l:'Cloud Synced',c:'ok'}; case 'saving': case 'pending': return {l:'Saving...',c:'busy'}; case 'connecting': return {l:'Connecting...',c:'busy'}; case 'offline': return {l:'Offline (local saved)',c:'warn'}; case 'error': return {l:'Sync issue',c:'warn'}; default: return {l:'Set up cloud sync',c:'off'}; } }
@@ -3877,6 +4456,7 @@ function renderCloudPanel(){
 function rerenderCloud(){ const pill=document.getElementById('cloudPill'); if(pill) pill.outerHTML=renderCloudPill(); const panel=document.getElementById('cloudPanel'); if(panel) panel.outerHTML=renderCloudPanel(); }
 document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&cloud.panelOpen){ cloud.panelOpen=false; rerenderCloud(); } });
 document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&importUI.open){ importUI.open=false; renderImportModal(); } });
+document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&ccMapUI.open){ ccMapUI.open=false; renderCcMapModal(); } });
 ['dragenter','dragover'].forEach(ev=>window.addEventListener(ev, e=>{ if(e.dataTransfer && [...e.dataTransfer.types].includes('Files')){ e.preventDefault(); } }));
 window.addEventListener('drop', e=>{
   const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
