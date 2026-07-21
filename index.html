@@ -281,6 +281,8 @@ tr.no-print-row input, tr.no-print-row select, .group-block.no-print-row input, 
   <div class="spacer"></div>
   <div class="actions">
     <button class="tb-btn" data-action="new">+ New</button>
+    <button class="tb-btn" id="undoBtn" data-action="undo" title="Undo (Ctrl+Z)" disabled>↩ Undo</button>
+    <button class="tb-btn" id="redoBtn" data-action="redo" title="Redo (Ctrl+Y)" disabled>↪ Redo</button>
     <button class="tb-btn" data-action="open-import" title="Import a Tekla Structures material list from Excel/CSV or Word/Report">📥 Import Material List</button>
     <button class="tb-btn" data-action="export">⬇ Export JSON</button>
     <button class="tb-btn" data-action="export-xlsx">⬇ Export Excel</button>
@@ -307,6 +309,17 @@ tr.no-print-row input, tr.no-print-row select, .group-block.no-print-row input, 
 <script>
 /* ============================ STATE ============================ */
 const DENSITY = 7850;
+const STD_PLATE_L = 1220; // standard steel plate is sold as 1220 x 2440 x (thickness) mm
+const STD_PLATE_W = 2440;
+function stdPlateKgPerPc(thicknessMm){ return plateKgPerPc(STD_PLATE_L, STD_PLATE_W, thicknessMm); }
+function rowStdPlateKg(r){
+  // Weight of one standard order plate for this row: uses the row's own standard dimensions
+  // (default 2440 x 1220) and its thickness. This is what the order quantity divides mass by.
+  const L = num(r.stdPlateL) || STD_PLATE_W; // 2440 default
+  const W = num(r.stdPlateW) || STD_PLATE_L; // 1220 default
+  const T = num(r.plateT);
+  return (L>0 && W>0 && T>0) ? plateKgPerPc(L, W, T) : 0;
+}
 const LS_KEY = 'ropa_requisition_v2';
 const OLD_LS_KEY = 'ropa_requisition_v1';
 const UNITS = ['No','Kg','Sm','LM','L','Item'];
@@ -2761,7 +2774,7 @@ function plateThicknessFromText(text){ const m=String(text||'').match(/x\s*([0-9
 function blankMaterialRow(over){
   return Object.assign({
     id:uid(), kind:'section', mode:'catalog', category:'UB', sizeIdx:0, profile:'', nos:'', unitLength:'', totalLength:'', stdLength:'6', barsToOrder:'', qty:'', unit:'No', mass:'', avail:'', orderQty:'', remarks:'', print:true, color:'',
-    kgPerM:'', plateL:'1220', plateW:'2440', plateT:'', unitOrderMass:'', platePiecesNeeded:0, plateOrderPieces:0
+    kgPerM:'', plateL:'1220', plateW:'2440', plateT:'', unitOrderMass:'', platePiecesNeeded:0, plateOrderPieces:0, platePooled:false, pooledMass:0, stdPlateL:'2440', stdPlateW:'1220'
   }, over||{});
 }
 function blankGroup(name){ return { id:uid(), name:name||'NEW SECTION', rows:[blankMaterialRow()] }; }
@@ -2819,6 +2832,10 @@ function migrateState(s){
       if(!r.plateW) r.plateW = '2440';
       if(!r.plateT) r.plateT = plateThicknessFromText(r.profile) || '';
       if(r.unitOrderMass===undefined) r.unitOrderMass = '';
+      if(r.platePooled===undefined) r.platePooled = false;
+      if(r.pooledMass===undefined) r.pooledMass = 0;
+      if(!r.stdPlateL) r.stdPlateL = '2440';
+      if(!r.stdPlateW) r.stdPlateW = '1220';
       if(r.kind==='section'){
         if(!r.stdLength) r.stdLength = '6';
         if(!r.unitLength) r.unitLength = '';
@@ -2889,9 +2906,63 @@ function loadState(){
 }
 let state = loadState() || defaultState();
 function localCacheKey(id){ return 'ropa_requisition_cloud_cache_'+id; }
+
+/* ---------------- Undo / Redo ---------------- */
+const HISTORY_LIMIT = 60;
+let undoStack = [];
+let redoStack = [];
+let historySnapshot = JSON.stringify(state); // the last committed state, as JSON
+let restoringHistory = false;                // guard so history restores don't re-enter the recorder
+function snapshotForHistory(){
+  // Record the state as it was BEFORE the change that just happened.
+  if(restoringHistory) return;
+  if(historySnapshot === undefined) return;
+  undoStack.push(historySnapshot);
+  if(undoStack.length > HISTORY_LIMIT) undoStack.shift();
+  redoStack = []; // any new edit invalidates the redo path
+  updateUndoRedoButtons();
+}
+function refreshHistorySnapshot(){ historySnapshot = JSON.stringify(state); }
+function updateUndoRedoButtons(){
+  const u=document.getElementById('undoBtn'), r=document.getElementById('redoBtn');
+  if(u) u.disabled = undoStack.length===0;
+  if(r) r.disabled = redoStack.length===0;
+}
+function doUndo(){
+  if(!undoStack.length) return;
+  redoStack.push(JSON.stringify(state));
+  const prev = undoStack.pop();
+  restoringHistory = true;
+  try{
+    state = migrateState(JSON.parse(prev));
+    historySnapshot = prev;
+    recalcAllMaterials();
+    try{ localStorage.setItem(LS_KEY, JSON.stringify(state)); }catch(e){}
+    if(cloud && cloud.client){ try{ localStorage.setItem(localCacheKey(state.id), JSON.stringify(state)); }catch(e){} queueCloudSave(); }
+    rerender();
+  } finally { restoringHistory = false; }
+  updateUndoRedoButtons();
+}
+function doRedo(){
+  if(!redoStack.length) return;
+  undoStack.push(JSON.stringify(state));
+  const next = redoStack.pop();
+  restoringHistory = true;
+  try{
+    state = migrateState(JSON.parse(next));
+    historySnapshot = next;
+    recalcAllMaterials();
+    try{ localStorage.setItem(LS_KEY, JSON.stringify(state)); }catch(e){}
+    if(cloud && cloud.client){ try{ localStorage.setItem(localCacheKey(state.id), JSON.stringify(state)); }catch(e){} queueCloudSave(); }
+    rerender();
+  } finally { restoringHistory = false; }
+  updateUndoRedoButtons();
+}
 function saveState(){
+  snapshotForHistory();
   recalcAllMaterials();
   try{ localStorage.setItem(LS_KEY, JSON.stringify(state)); }catch(e){}
+  refreshHistorySnapshot();
   if(cloud && cloud.client){
     try{ localStorage.setItem(localCacheKey(state.id), JSON.stringify(state)); }catch(e){}
     queueCloudSave();
@@ -2936,7 +3007,6 @@ function rowRequiredRaw(r){
 function groupMassTotal(g,printOnly){ return g.rows.reduce((s,r)=> (printOnly && r.print===false) ? s : s+num(r.mass),0); }
 function grandMassTotal(printOnly){ return state.materialGroups.reduce((s,g)=>s+groupMassTotal(g,printOnly),0); }
 function recalcAllMaterials(){
-  const plateBuckets = {};
   state.materialGroups.forEach(g=>g.rows.forEach(r=>{
     syncCatalogRow(r);
     if(r.kind==='section'){
@@ -2953,28 +3023,28 @@ function recalcAllMaterials(){
       if(totalLength && num(r.kgPerM)) r.mass = round4(totalLength * num(r.kgPerM));
       else r.mass = '';
     } else {
-      const pcs = num(r.nos);
-      const kgPc = plateUnitMass(r);
-      const mass = kgPc ? round4(pcs * kgPc) : 0;
-      r.mass = mass ? String(mass) : '';
-      r.qty = pcs ? String(pcs) : '';
-      r.platePiecesNeeded = pcs;
-      const key = String(num(r.plateT) || plateThicknessFromText(rowDesc(r)) || rowDesc(r)).trim();
-      if(!plateBuckets[key]) plateBuckets[key] = { rows:[], total:0, avail:0 };
-      plateBuckets[key].rows.push(r);
-      plateBuckets[key].total += pcs;
-      plateBuckets[key].avail += num(r.avail);
+      // PLATES: mass comes either from a fixed pooled total, or from pieces x per-piece mass.
+      // Ordering is always by weight: standard plates to order = total mass / weight of one
+      // standard order plate (row's own std dimensions x thickness), less any in stock.
+      let totalMass;
+      if(r.platePooled){
+        totalMass = num(r.pooledMass) || num(r.mass);
+      } else {
+        const pcs = num(r.nos);
+        const kgPc = plateUnitMass(r);
+        totalMass = kgPc ? round4(pcs * kgPc) : 0;
+        r.qty = pcs ? String(pcs) : '';
+      }
+      r.mass = totalMass ? String(round4(totalMass)) : '';
+      const stdKg = rowStdPlateKg(r);
+      const sheetsNeeded = stdKg>0 ? ceilSafe(totalMass/stdKg) : 0;
+      r.platePiecesNeeded = sheetsNeeded;
+      if(r.platePooled) r.qty = sheetsNeeded ? String(sheetsNeeded) : '';
+      const order = Math.max(sheetsNeeded - num(r.avail), 0);
+      r.orderQty = order ? String(order) : '';
+      r.plateOrderPieces = order;
     }
   }));
-  Object.keys(plateBuckets).forEach(k=>{
-    const b = plateBuckets[k];
-    const toOrder = ceilSafe(Math.max(b.total - b.avail, 0));
-    let remaining = toOrder;
-    b.rows.forEach((r,idx)=>{
-      if(idx===b.rows.length-1){ r.orderQty = remaining ? String(remaining) : ''; r.plateOrderPieces = remaining; }
-      else { r.orderQty = ''; r.plateOrderPieces = 0; }
-    });
-  });
 }
 
 /* ============================ PAINT CALC ============================ */
@@ -3044,7 +3114,7 @@ function restoreFocus(info){
     }
   }catch(e){}
 }
-function rerender(){ const focusInfo=captureFocus(); recalcAllMaterials(); document.getElementById('shell').innerHTML = renderApp(); rerenderCloud(); saveLocalOnly(); restoreFocus(focusInfo); }
+function rerender(){ const focusInfo=captureFocus(); recalcAllMaterials(); document.getElementById('shell').innerHTML = renderApp(); rerenderCloud(); saveLocalOnly(); restoreFocus(focusInfo); updateUndoRedoButtons(); }
 function renderApp(){
   const tabs = '<div class="app-tabs">'+
     '<button class="app-tab '+(state.activeTab!=='counterCheck'?'active':'')+'" data-action="switch-tab" data-tab="requisition">Requisition</button>'+
@@ -3067,7 +3137,7 @@ function renderMaterialCard(){
 function renderMaterialGroup(g,gi){
   const rows = g.rows.map((r,ri)=>renderMaterialRow(g,r,ri)).join('');
   return '<div class="group-block" data-group="'+g.id+'"><div class="group-head"><input class="f-text group-name" data-group-name="'+g.id+'" value="'+esc(g.name)+'" style="text-transform:uppercase;"><div class="spacer"></div><button class="btn btn-add" data-action="add-row" data-group="'+g.id+'">+ Section</button><button class="btn btn-add" data-action="add-plate-row" data-group="'+g.id+'">+ Plate</button><button class="btn-ghost" data-action="remove-group" data-group="'+g.id+'">Remove group</button></div>'+
-    '<div class="table-scroll"><table class="items-table"><thead><tr><th class="num-col">No</th><th class="col-sm" title="Highlight this row">Color</th><th class="col-sm" title="Include this row when printing / exporting">Print</th><th class="desc-col">Section / Plate</th><th class="col-sm">Mode</th><th class="col-sm">Element Qty (Takeoff)</th><th class="col-sm">Element Unit Length</th><th class="col-sm">T-Length</th><th class="col-sm">T-Mass</th><th class="col-sm">Std Order Length</th><th class="col-sm">Bars Reqd</th><th class="col-unit">Unit</th><th class="col-sm">Available in Stock</th><th class="col-sm">Qty to Order</th><th class="desc-col">Remarks</th><th class="rm-col"></th></tr></thead><tbody>'+rows+'</tbody><tfoot><tr class="sum-row"><td colspan="8" style="text-align:right;">Group total mass:</td><td class="readout-cell">'+fmt(groupMassTotal(g),1)+'</td><td colspan="7"></td></tr></tfoot></table></div></div>';
+    '<div class="table-scroll"><table class="items-table"><thead><tr><th class="num-col">No</th><th class="col-sm" title="Highlight this row">Color</th><th class="col-sm" title="Include this row when printing / exporting">Print</th><th class="desc-col">Section / Plate</th><th class="col-sm">Mode</th><th class="col-sm">Element Qty (Takeoff)</th><th class="col-sm">Element Unit Length</th><th class="col-sm">T-Length</th><th class="col-sm">T-Mass</th><th class="col-sm" title="Sections: standard bar length (6/12 m). Plates: standard plate size &amp; its weight">Std Order (Len / Plate)</th><th class="col-sm" title="Sections: bars required. Plates: standard plates required">Bars / Plates Reqd</th><th class="col-unit">Unit</th><th class="col-sm">Available in Stock</th><th class="col-sm">Qty to Order</th><th class="desc-col">Remarks</th><th class="rm-col"></th></tr></thead><tbody>'+rows+'</tbody><tfoot><tr class="sum-row"><td colspan="8" style="text-align:right;">Group total mass:</td><td class="readout-cell">'+fmt(groupMassTotal(g),1)+'</td><td colspan="7"></td></tr></tfoot></table></div></div>';
 }
 function renderCatalogControls(r){
   const cats = catalogCategories();
@@ -3078,19 +3148,34 @@ function renderCatalogControls(r){
 }
 function renderMaterialRow(g,r,ri){
   const isPlate = r.kind==='plate';
+  const isPooled = isPlate && r.platePooled;
   const modeSel = '<select class="f-select" data-field="mode"><option value="catalog" '+(r.mode==='catalog'?'selected':'')+'>Catalog</option><option value="custom" '+(r.mode==='custom'?'selected':'')+'>Custom</option></select>';
   const desc = r.mode==='catalog' ? renderCatalogControls(r) : '<input class="f-text" data-field="profile" value="'+esc(r.profile)+'" placeholder="e.g. L50*50*6 or 1220x2440x8mm plate">'+(isPlate?'<div class="mini-row"><input class="f-num" data-field="plateL" value="'+esc(r.plateL)+'" placeholder="L mm"><input class="f-num" data-field="plateW" value="'+esc(r.plateW)+'" placeholder="W mm"><input class="f-num" data-field="plateT" value="'+esc(r.plateT)+'" placeholder="T mm"></div>':'<div class="mini-row"><input class="f-num" data-field="kgPerM" value="'+esc(r.kgPerM)+'" placeholder="kg/m"></div>');
   const computedKgPc = plateUnitMass(r);
-  const unitOrderCell = isPlate ? '<input class="f-num" data-field="unitOrderMass" value="'+esc(r.unitOrderMass)+'" placeholder="'+(computedKgPc?fmt(computedKgPc,1):'kg/pc')+'">' : '<input class="f-num" data-field="unitLength" value="'+esc(r.unitLength)+'" placeholder="cut length m">';
-  const stdLengthCell = isPlate ? '<span class="readout-cell">-</span>' : '<input class="f-num" data-field="stdLength" value="'+esc(r.stdLength)+'" placeholder="6 or 12">';
-  const barsCell = isPlate ? '<span class="readout-cell">-</span>' : '<span class="readout-cell">'+(r.barsToOrder||'-')+'</span>';
-  const nosCell = '<input class="f-num" data-field="nos" value="'+esc(r.nos)+'" placeholder="pcs">';
+  // Element Qty: pooled plate carries total mass; other plates carry cut pieces
+  const nosCell = isPooled
+    ? '<input class="f-num" data-field="pooledMass" value="'+esc(r.pooledMass)+'" placeholder="total kg" title="Total pooled mass at this thickness">'
+    : '<input class="f-num" data-field="nos" value="'+esc(r.nos)+'" placeholder="pcs">';
+  const unitOrderCell = isPlate
+    ? (isPooled
+        ? '<span class="readout-cell" title="Total pooled mass (kg)">'+(r.mass?fmt(r.mass,1):'-')+'</span>'
+        : '<input class="f-num" data-field="unitOrderMass" value="'+esc(r.unitOrderMass)+'" placeholder="'+(computedKgPc?fmt(computedKgPc,1):'kg/pc')+'">')
+    : '<input class="f-num" data-field="unitLength" value="'+esc(r.unitLength)+'" placeholder="cut length m">';
+  // Std Order column: for plates, editable standard plate dimensions + computed standard-plate weight.
+  const stdKg = isPlate ? rowStdPlateKg(r) : 0;
+  const stdLengthCell = isPlate
+    ? '<div class="mini-row"><input class="f-num" data-field="stdPlateL" value="'+esc(r.stdPlateL)+'" placeholder="L mm" title="Standard plate length"><input class="f-num" data-field="stdPlateW" value="'+esc(r.stdPlateW)+'" placeholder="W mm" title="Standard plate width"></div><span class="readout-cell" title="Weight of one standard order plate">'+(stdKg?fmt(stdKg,1)+' kg':'set T')+'</span>'
+    : '<input class="f-num" data-field="stdLength" value="'+esc(r.stdLength)+'" placeholder="6 or 12">';
+  const barsCell = isPlate ? '<span class="readout-cell" title="Standard plates required">'+(r.platePiecesNeeded||'-')+'</span>' : '<span class="readout-cell">'+(r.barsToOrder||'-')+'</span>';
   const totalCell = isPlate ? '<span class="readout-cell">'+(r.mass?fmt(r.mass,2):'-')+'</span>' : '<span class="readout-cell">'+(r.totalLength?fmt(r.totalLength,2):'-')+'</span>';
   const massCell = '<span class="readout-cell">'+(esc(r.mass)||'-')+'</span>';
+  const availCell = isPlate
+    ? '<input class="f-num" data-field="avail" value="'+esc(r.avail)+'" placeholder="0" title="Standard plates already in stock">'
+    : '<input class="f-num" data-field="avail" value="'+esc(r.avail)+'" placeholder="0">';
   const printCell = '<input type="checkbox" data-field="print" '+(r.print!==false?'checked':'')+' title="Include on printed/exported requisition">';
   const colorCell = '<td class="row-color-cell"><input type="color" class="row-color-swatch" data-field="color" value="'+(r.color||'#ffffff')+'" title="Highlight this row">'+(r.color?'<button type="button" class="row-color-clear" data-action="clear-row-color" data-scope="material" data-group="'+g.id+'" data-row="'+ri+'">clear</button>':'')+'</td>';
   const rowStyle = r.color ? ' style="background:'+esc(r.color)+'22;"' : '';
-  return '<tr data-group="'+g.id+'" data-row="'+ri+'" class="'+(r.print===false?'no-print-row':'')+'"'+rowStyle+'><td class="num-col">'+(ri+1)+'</td>'+colorCell+'<td class="num-col">'+printCell+'</td><td class="desc-col">'+desc+'</td><td>'+modeSel+'<select class="f-select" data-field="kind"><option value="section" '+(!isPlate?'selected':'')+'>Section</option><option value="plate" '+(isPlate?'selected':'')+'>Plate</option></select></td><td>'+nosCell+'</td><td>'+unitOrderCell+'</td><td>'+totalCell+'</td><td>'+massCell+'</td><td>'+stdLengthCell+'</td><td>'+barsCell+'</td><td><select class="f-select" data-field="unit">'+unitOptions(r.unit)+'</select></td><td><input class="f-num" data-field="avail" value="'+esc(r.avail)+'" placeholder="0"></td><td class="readout-cell">'+(r.orderQty||'-')+'</td><td><input class="f-text" data-field="remarks" value="'+esc(r.remarks)+'"></td><td class="rm-col"><button class="btn-icon" data-action="remove-row" data-group="'+g.id+'" data-row="'+ri+'">x</button></td></tr>';
+  return '<tr data-group="'+g.id+'" data-row="'+ri+'" class="'+(r.print===false?'no-print-row':'')+'"'+rowStyle+'><td class="num-col">'+(ri+1)+'</td>'+colorCell+'<td class="num-col">'+printCell+'</td><td class="desc-col">'+desc+'</td><td>'+modeSel+'<select class="f-select" data-field="kind"><option value="section" '+(!isPlate?'selected':'')+'>Section</option><option value="plate" '+(isPlate?'selected':'')+'>Plate</option></select></td><td>'+nosCell+'</td><td>'+unitOrderCell+'</td><td>'+totalCell+'</td><td>'+massCell+'</td><td>'+stdLengthCell+'</td><td>'+barsCell+'</td><td><select class="f-select" data-field="unit">'+unitOptions(r.unit)+'</select></td><td>'+availCell+'</td><td class="readout-cell">'+(r.orderQty||'-')+'</td><td><input class="f-text" data-field="remarks" value="'+esc(r.remarks)+'"></td><td class="rm-col"><button class="btn-icon" data-action="remove-row" data-group="'+g.id+'" data-row="'+ri+'">x</button></td></tr>';
 }
 /* ============================ GENERAL ITEMS ============================ */
 function renderGeneralCard(){
@@ -3242,10 +3327,11 @@ function renderInstallerCard(){
 const importUI = { open:false, stage:'picker', tab:'excel', rows:[], source:'', project:'', phase:'', mode:'append', error:'', plateMode:'pool', profileMode:'group' };
 
 function teklaFamily(profile){
-  const p = String(profile||'').trim().toUpperCase();
+  const pRaw = String(profile||'').trim().toUpperCase();
+  const p = pRaw.replace(/\./g,''); // tolerate dotted notation like "I.P.E160"
   if(/^(PLT|PL)\s*\d/.test(p) || /^PLATE/.test(p)) return { key:'PLATES', label:'PLATES', kind:'plate' };
-  if(/^FL\s*\d/.test(p) || /^FLAT/.test(p)) return { key:'FLATS', label:'FLAT BARS / PLATES', kind:'plate' };
-  if(/^IPE/.test(p)) return { key:'IPE', label:'IPE SECTIONS', kind:'section' };
+  if(/^(FL|FLT)\s*\d/.test(p) || /^FLAT/.test(p)) return { key:'FLATS', label:'FLAT BARS / PLATES', kind:'plate' };
+  if(/^I\s*P\s*E/.test(p)) return { key:'IPE', label:'IPE SECTIONS', kind:'section' };
   if(/^(UB|UKB)/.test(p)) return { key:'UB', label:'UB SECTIONS', kind:'section' };
   if(/^(UC|UKC)/.test(p)) return { key:'UC', label:'UC SECTIONS', kind:'section' };
   if(/^(HEA|HEB|HEM)/.test(p)) return { key:'HE', label:'HE SECTIONS', kind:'section' };
@@ -3254,28 +3340,38 @@ function teklaFamily(profile){
   if(/^RHS/.test(p)) return { key:'RHS', label:'RHS SECTIONS', kind:'section' };
   if(/^(L|A)\s*\d/.test(p) || /^ANGLE/.test(p)) return { key:'ANGLE', label:'ANGLE SECTIONS', kind:'section' };
   if(/^(CFLZ|CFZ|ZED)/.test(p) || /^Z\s*\d/.test(p)) return { key:'ZED', label:'ZED PURLINS', kind:'section' };
-  if(/^(CFLC|CFC|CLC)/.test(p)) return { key:'CFLC', label:'C PURLINS (COLD FORMED)', kind:'section' };
-  if(/^(PFC|C|U)\s*\d/.test(p) || /^CHANNEL/.test(p)) return { key:'CHANNEL', label:'CHANNEL SECTIONS', kind:'section' };
-  if(/^(RB|ROD|RO|ROUND|DIA)/.test(p)) return { key:'RB', label:'ROUND BARS', kind:'section' };
+  if(/^(CFLC|CFC|CLC|CC)\s*\d/.test(p)) return { key:'CFLC', label:'C PURLINS (COLD FORMED)', kind:'section' };
+  if(/^(PFC|RSC|C|U)\s*\d/.test(p) || /^CHANNEL/.test(p)) return { key:'CHANNEL', label:'CHANNEL SECTIONS', kind:'section' };
+  if(/^(RB|ROD|RO|ROUND|DIA)/.test(p) || /^D\d/.test(p)) return { key:'RB', label:'ROUND BARS', kind:'section' };
   if(/GUTTER|FLASH|SHEET|DECK|CLAD/.test(p)) return { key:'FAB', label:'FABRICATED / SHEET ITEMS', kind:'section' };
   return { key:'OTHER', label:'OTHER SECTIONS', kind:'section' };
 }
 function plateDimsFromProfile(profile){
-  // PLT10*170  |  PL6*170  |  FL10*80  |  PLT 10 x 170
-  const m = String(profile||'').match(/^(?:PLT|PL|FL)\s*([0-9.]+)\s*[*xX]\s*([0-9.]+)/i);
+  // PLT10*170  |  PL6*170  |  FL10*80  |  FLT10*300  |  PLT 10 x 170
+  const m = String(profile||'').match(/^(?:PLT|PL|FLT|FL)\s*([0-9.]+)\s*[*xX]\s*([0-9.]+)/i);
   if(m) return { t:num(m[1]), w:num(m[2]) };
   return { t:plateThicknessFromText(profile), w:0 };
 }
 function makeImportRow(profile, lengthMm, qty, material, massEach){
   const fam = teklaFamily(profile);
-  const lenM = num(lengthMm)/1000;
-  const kgPerM = (fam.kind==='section' && lenM>0 && num(massEach)>0) ? round4(num(massEach)/lenM) : 0;
+  let lenM = num(lengthMm)/1000;
+  let kgPerM = (fam.kind==='section' && lenM>0 && num(massEach)>0) ? round4(num(massEach)/lenM) : 0;
+  let noLength = false;
+  if(fam.kind==='section' && lenM<=0 && num(massEach)>0){
+    // No length was reported (e.g. an Assembly List export with weight but no linear length).
+    // Use a nominal 1m unit so total mass still comes through correctly; length/bars-to-order
+    // fields are placeholders the person can correct once they know the real cut length.
+    noLength = true;
+    lenM = 1;
+    kgPerM = round4(num(massEach));
+  }
   const dims = fam.kind==='plate' ? plateDimsFromProfile(profile) : {t:0,w:0};
   return {
     id: uid(),
     include: true,
     profile: String(profile||'').trim().replace(/\s*\*{2,}\s*$/,'').trim(),
-    lengthMm: num(lengthMm),
+    lengthMm: noLength ? 1000 : num(lengthMm),
+    noLength,
     qty: num(qty),
     material: String(material||'').trim(),
     massEach: num(massEach),
@@ -3320,27 +3416,52 @@ function parseTeklaText(text){
   return out;
 }
 function detectSheetHeader(aoa){
-  const norm = s=>String(s||'').toLowerCase().replace(/[^a-z]/g,'');
-  const PROFILE_WORDS = ['profile','section','profilename','sectiontype','sectionname'];
-  const LENGTH_WORDS = ['length','lengthmm','cutlength','barlength','partlength'];
-  const QTY_WORDS = ['no','qty','quantity','number','nos','pcs','pieces','count'];
-  const MATERIAL_WORDS = ['material','grade','steelgrade'];
-  const MASS_WORDS = ['mass','weight','masskg','weightkg','masseach','weighteach','unitweight','unitmass'];
+  const norm = s=>String(s||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+  // Probes are checked with .includes() rather than exact equality, since real headers often
+  // carry extra qualifiers ("Net Weight(kg) for one"). Earlier probes in each list are preferred
+  // when several match the same cell.
+  const PROFILE_PROBES = ['profilename','sectiontype','sectionname','profile','section'];
+  const LENGTH_PROBES = ['lengthmm','cutlength','barlength','partlength','length'];
+  const QTY_PROBES = ['quantity','pieces','number','nos','pcs','qty','no'];
+  const MATERIAL_PROBES = ['steelgrade','material','grade'];
+  const MASS_PROBES = ['weightkg','masskg','unitweight','unitmass','weighteach','masseach','weight','mass'];
+
+  function findBest(cellsNorm, rawCells, probes){
+    let bestIdx=-1, bestScore=-Infinity;
+    cellsNorm.forEach((c,i)=>{
+      if(!c) return;
+      let probeIdx=-1;
+      for(let p=0;p<probes.length;p++){ if(c.includes(probes[p])){ probeIdx=p; break; } }
+      if(probeIdx<0) return;
+      let score = probes.length - probeIdx; // earlier (more specific) probes score higher
+      const rawLower = String(rawCells[i]===undefined||rawCells[i]===null?'':rawCells[i]).toLowerCase();
+      // "for one" / "each" / "unit" / "per" -> this is a per-piece value, prefer it
+      if(/\b(one|each|unit|per)\b/.test(rawLower)) score += 5;
+      // "for all" / "total" / "sum" -> this is an aggregate, deprioritise for per-piece extraction
+      if(/\b(all|total|sum)\b/.test(rawLower)) score -= 5;
+      if(score>bestScore){ bestScore=score; bestIdx=i; }
+    });
+    return bestIdx;
+  }
+
   for(let i=0;i<Math.min(aoa.length,80);i++){
     const raw = aoa[i]||[];
-    const cells = raw.map(norm);
-    const pi = cells.findIndex(c=>PROFILE_WORDS.includes(c));
+    const cellsNorm = raw.map(norm);
+    const pi = findBest(cellsNorm, raw, PROFILE_PROBES);
     if(pi<0) continue;
-    const li = cells.findIndex(c=>LENGTH_WORDS.includes(c));
+    const li = findBest(cellsNorm, raw, LENGTH_PROBES);
+    const mi = findBest(cellsNorm, raw, MASS_PROBES);
+    // A confident header row needs Profile plus at least one of Length or Mass to be usable
+    if(li<0 && mi<0) continue;
     return {
       hdr:i,
       headers: raw.map(c=>String(c===undefined||c===null?'':c).trim()),
       map:{
         profile: pi,
         length: li,
-        qty: cells.findIndex(c=>QTY_WORDS.includes(c)),
-        material: cells.findIndex(c=>MATERIAL_WORDS.includes(c)),
-        mass: cells.findIndex(c=>MASS_WORDS.includes(c))
+        qty: findBest(cellsNorm, raw, QTY_PROBES),
+        material: findBest(cellsNorm, raw, MATERIAL_PROBES),
+        mass: mi
       }
     };
   }
@@ -3348,7 +3469,7 @@ function detectSheetHeader(aoa){
 }
 function parseTeklaSheet(aoa){
   const found = detectSheetHeader(aoa);
-  if(!found || found.map.length<0){
+  if(!found){
     // Not a recognisable table - fall back to text parsing of joined rows
     const text = aoa.map(r=>(r||[]).map(c=>c===undefined||c===null?'':String(c)).join('  ')).join('\n');
     return parseTeklaText(text);
@@ -3438,6 +3559,113 @@ async function handleTeklaFile(file){
   importUI.stage = 'preview';
   renderImportModal();
 }
+function quoteRowToImportRow(qr){
+  // Only steel take-off lines are meaningful for a material requisition. Skip anything priced by
+  // SM / Item / LM / No or with no profile at all (paint, preliminaries, grouting, chemical anchorage).
+  const unit = String(qr.unit||'').toLowerCase();
+  if(!/^kgs?$/.test(unit)) return null;
+  let prof = String(qr.profile||'').trim();
+  const desc = String(qr.description||'').trim();
+
+  // Some fabricated steel lines (gutters, base plates, fin plates) carry no separate profile - the
+  // spec sits inside the description as e.g. "500x100x4mm plate x 1,134 Nos" or
+  // "174,000x1,220x3mm plate x 1 Nos". Recover a usable plate profile and piece count from there.
+  let recoveredPlateNos = 0;
+  if(!prof || prof==='—' || prof==='-'){
+    const pm = desc.match(/([\d,\.]+)\s*[x×]\s*([\d,\.]+)\s*[x×]\s*([\d,\.]+)\s*mm\s*(?:plate|plt)?\s*(?:x\s*([\d,\.]+)\s*nos?)?/i);
+    if(pm){
+      const d1=numC(pm[1]), d2=numC(pm[2]), d3=numC(pm[3]);
+      // thickness is the smallest of the three dimensions; the plate label uses length x width x thk
+      const dims=[d1,d2,d3].sort((a,b)=>a-b);
+      const thk=dims[0], wid=dims[1], len=dims[2];
+      prof = fmtPlateProfile(len,wid,thk);
+      recoveredPlateNos = pm[4]? numC(pm[4]) : 1;
+    }
+  }
+  if(!prof || prof==='—' || prof==='-') return null;
+
+  const fam = teklaFamily(prof);
+  // The quote gives NOS (piece count), LEN in metres, TOT M, KG/M and the total mass (its QTY column).
+  const nos = num(qr.nos);
+  const lenM = num(qr.len);
+  const kgm = num(qr.kgm);
+  const massTotal = num(qr.massTotal) || (num(qr.totm)*kgm);
+
+  if(fam.kind==='plate'){
+    // Plate priced as a single fabricated item: one piece carrying the full mass (or the piece count
+    // recovered from the description, e.g. 1,134 fin plates).
+    const pcs = recoveredPlateNos>0 ? recoveredPlateNos : (nos>0?nos:1);
+    return {
+      id: uid(), include:true, profile: prof,
+      lengthMm: 0, noLength:false, qty: pcs,
+      material:'', massEach: round4(massTotal/pcs),
+      massTotal: round4(massTotal),
+      kind:'plate', group: fam.label, kgPerM:0,
+      plateT: plateDimsFromProfile(prof).t, plateW: plateDimsFromProfile(prof).w,
+      descNote: desc
+    };
+  }
+
+  // Section line.
+  if(nos>0 && lenM>0){
+    return {
+      id: uid(), include:true, profile: prof,
+      lengthMm: round4(lenM*1000), noLength:false, qty: nos,
+      material:'', massEach: round4(massTotal/nos),
+      massTotal: round4(massTotal),
+      kind:'section', group: fam.label,
+      kgPerM: kgm>0 ? kgm : (lenM>0 ? round4(massTotal/(nos*lenM)) : 0),
+      plateT:0, plateW:0, descNote:desc
+    };
+  }
+  // Section priced as one lump (e.g. rafters/columns given as NOS 1, LEN = total metres): treat the
+  // whole run as a single "piece" with that total length so mass still lands correctly.
+  const runLen = num(qr.totm) || lenM;
+  return {
+    id: uid(), include:true, profile: prof,
+    lengthMm: round4(runLen*1000), noLength:false, qty: nos>0?nos:1,
+    material:'', massEach: round4(massTotal/(nos>0?nos:1)),
+    massTotal: round4(massTotal),
+    kind:'section', group: fam.label,
+    kgPerM: kgm>0 ? kgm : (runLen>0 ? round4(massTotal/runLen) : 0),
+    plateT:0, plateW:0, descNote:desc
+  };
+}
+function fmtPlateProfile(len,wid,thk){
+  // Produce a PLT-style profile the family classifier and plate dim parser both understand.
+  const t = thk % 1 === 0 ? String(thk) : String(round4(thk));
+  const w = wid % 1 === 0 ? String(wid) : String(round4(wid));
+  return 'PLT'+t+'*'+w+(len? (' ('+ (len>=1000? round4(len/1000)+'m' : len+'mm') +' long)') : '');
+}
+async function handleQuoteFile(file){
+  suppressCloudRefresh(30000);
+  let lines, qrows;
+  try{
+    lines = await extractPdfLines(file);
+    qrows = parseQuoteLines(lines);
+  }catch(err){
+    alert((err && err.message) || 'Could not read that PDF.');
+    return;
+  }
+  const rows = qrows.map(quoteRowToImportRow).filter(Boolean);
+  if(!rows.length){
+    alert('No steel line items were recognised in "'+file.name+'".\n\nExpected a Ropa-style steel quotation with # / Description / Profile / Dimensions / Kg/m / Un / Qty / Rate / Amt columns. Note that paint, preliminaries and other non-steel lines are skipped.');
+    return;
+  }
+  const skipped = qrows.length - rows.length;
+  importUI.rows = rows;
+  importUI.source = file.name + (skipped>0 ? ' ('+skipped+' non-steel line'+(skipped>1?'s':'')+' skipped)' : '');
+  importUI.project = '';
+  importUI.phase = '';
+  importUI.mode = 'append';
+  // A quote is already a summarised take-off - keep one requisition row per quote line and preserve
+  // each line's stated mass, rather than re-deriving plate masses from standard sheet sizes.
+  importUI.plateMode = 'separate';
+  importUI.profileMode = 'separate';
+  importUI.open = true;
+  importUI.stage = 'preview';
+  renderImportModal();
+}
 function importTotals(){
   const sel = importUI.rows.filter(r=>r.include);
   return {
@@ -3448,12 +3676,16 @@ function importTotals(){
   };
 }
 function renderImportPicker(){
-  const excelActive = importUI.tab!=='word';
+  const tab = importUI.tab;
+  const excelActive = tab==='excel' || (tab!=='word' && tab!=='quote');
+  const wordActive = tab==='word';
+  const quoteActive = tab==='quote';
   return '<div class="modal-head"><h2>Import Material List</h2><div class="spacer"></div><button class="btn-ghost" data-action="close-import">Close</button></div>'+
     '<div class="modal-body">'+
       '<div class="imp-tabs">'+
         '<button class="imp-tab '+(excelActive?'active':'')+'" data-action="import-tab" data-tab="excel">📊 Excel / CSV</button>'+
-        '<button class="imp-tab '+(!excelActive?'active':'')+'" data-action="import-tab" data-tab="word">📄 Word / Text Report</button>'+
+        '<button class="imp-tab '+(wordActive?'active':'')+'" data-action="import-tab" data-tab="word">📄 Word / Text Report</button>'+
+        '<button class="imp-tab '+(quoteActive?'active':'')+'" data-action="import-tab" data-tab="quote">📝 Quote (PDF)</button>'+
       '</div>'+
       '<div class="imp-pane '+(excelActive?'active':'')+'">'+
         '<label class="imp-picker-drop" for="impFileExcel">'+
@@ -3464,7 +3696,7 @@ function renderImportPicker(){
         '<input type="file" id="impFileExcel" accept=".xlsx,.xls,.csv" style="display:none;">'+
         '<div class="imp-col-hint">Works with a Tekla <b>Material List</b> or <b>Part List</b> export. The sheet must have a header row containing columns for <code>Profile</code> and <code>Length</code>, plus <code>No</code> (quantity), <code>Material</code> and <code>Mass</code> if available - these can be in any order and any sheet in the workbook.</div>'+
       '</div>'+
-      '<div class="imp-pane '+(!excelActive?'active':'')+'">'+
+      '<div class="imp-pane '+(wordActive?'active':'')+'">'+
         '<label class="imp-picker-drop" for="impFileWord">'+
           '<div class="imp-icon">📄</div>'+
           '<div class="imp-title">Click to choose, or drag a file here</div>'+
@@ -3472,6 +3704,15 @@ function renderImportPicker(){
         '</label>'+
         '<input type="file" id="impFileWord" accept=".docx,.doc,.txt,.rpt,.xsr" style="display:none;">'+
         '<div class="imp-col-hint">Reads the fixed-width report layout Tekla prints, e.g. <code>Profile&nbsp;&nbsp;Length&nbsp;&nbsp;No&nbsp;&nbsp;Material&nbsp;&nbsp;Paint Area&nbsp;&nbsp;Mass</code> per line. Old binary <code>.doc</code> files are not readable in-browser - re-save as .docx first.</div>'+
+      '</div>'+
+      '<div class="imp-pane '+(quoteActive?'active':'')+'">'+
+        '<label class="imp-picker-drop" for="impFileQuote">'+
+          '<div class="imp-icon">📝</div>'+
+          '<div class="imp-title">Click to choose, or drag a file here</div>'+
+          '<div class="imp-sub">A Ropa steel quotation PDF - pulls each steel line into the requisition</div>'+
+        '</label>'+
+        '<input type="file" id="impFileQuote" accept=".pdf" style="display:none;">'+
+        '<div class="imp-col-hint">Reads a Ropa-style steel quotation with <code># / Description / Profile / Dimensions / Kg/m / Un / Qty / Rate / Amt</code> columns. Steel line items become material rows (profile, pieces, unit length and kg/m carried across); non-steel lines like paint, grouting and preliminaries are skipped since they are not steel take-off. Where a line is priced as a single fabricated item (gutters, base plates), it comes in as one piece carrying its full mass.</div>'+
       '</div>'+
     '</div>'+
     '<div class="modal-foot"><div class="spacer"></div><button class="btn-ghost" data-action="close-import">Cancel</button></div>';
@@ -3485,7 +3726,7 @@ function renderImportPreview(){
     '<td>'+esc(r.profile)+'</td>'+
     '<td class="n">'+fmt(r.lengthMm,0)+'</td>'+
     '<td class="n">'+fmt(r.qty,0)+'</td>'+
-    '<td>'+esc(r.material)+'</td>'+
+    '<td>'+esc(r.material || r.descNote || '')+'</td>'+
     '<td class="n">'+fmt(r.massEach,2)+'</td>'+
     '<td class="n">'+fmt(r.massTotal,1)+'</td>'+
     '<td><select class="f-select" data-impfield="kind"><option value="section" '+(r.kind==='section'?'selected':'')+'>Section</option><option value="plate" '+(r.kind==='plate'?'selected':'')+'>Plate</option></select></td>'+
@@ -3565,6 +3806,18 @@ function groupProfilesByName(rows){
   });
   return Object.values(buckets);
 }
+function groupNoLengthProfiles(rows){
+  const buckets = {};
+  rows.forEach(r=>{
+    const gname = (r.group||'IMPORTED ITEMS').trim().toUpperCase();
+    const key = gname+'|'+r.profile.trim().toUpperCase();
+    const b = buckets[key] || (buckets[key] = { group:gname, profile:r.profile, qty:0, mass:0, materials:{} });
+    b.qty += r.qty;
+    b.mass = round4(b.mass + r.massTotal);
+    if(r.material) b.materials[r.material]=true;
+  });
+  return Object.values(buckets);
+}
 function applyImport(){
   const sel = importUI.rows.filter(r=>r.include);
   if(!sel.length){ alert('Nothing selected to import.'); return; }
@@ -3587,15 +3840,21 @@ function applyImport(){
       const g = ensureGroup(b.group);
       const widths = Object.keys(b.widths);
       const materials = Object.keys(b.materials);
+      const stdKg = b.t ? stdPlateKgPerPc(b.t) : 0;
+      const sheets = stdKg>0 ? ceilSafe(b.mass/stdKg) : 0;
       g.rows.push(blankMaterialRow({
         kind:'plate', mode:'custom', category:'plates',
         profile: b.t ? (b.t+'mm PLATE (pooled)') : 'PLATE (pooled)',
         plateT: b.t ? String(b.t) : '',
-        plateW: widths.length===1 ? widths[0] : '',
+        plateL: String(STD_PLATE_L), plateW: String(STD_PLATE_W),
+        stdPlateL: String(STD_PLATE_W), stdPlateW: String(STD_PLATE_L),
+        platePooled: true,
+        pooledMass: round4(b.mass),
         unitOrderMass:'',
-        nos: String(b.qty), unit:'No',
-        remarks: 'Pooled '+fmt(b.qty,0)+' pcs, '+fmt(b.mass,1)+' kg total'+
-                 (widths.length>1?'; widths: '+widths.join(', ')+'mm':'')+
+        nos:'', unit:'No',
+        remarks: 'Pooled '+fmt(b.qty,0)+' cut pc(s), '+fmt(b.mass,1)+' kg total'+
+                 (b.t?' -> '+fmt(sheets,0)+' std '+STD_PLATE_W+'x'+STD_PLATE_L+'x'+b.t+'mm plate(s)':'')+
+                 (widths.length?'; cut widths: '+widths.join(', ')+'mm':'')+
                  (materials.length?'; Grade '+materials.join('/'):'')
       }));
     });
@@ -3610,13 +3869,16 @@ function applyImport(){
         plateT: r.plateT ? String(r.plateT) : '',
         unitOrderMass: r.massEach ? String(round4(r.massEach)) : '',
         nos: String(r.qty), unit:'No',
-        remarks: r.material ? 'Grade '+r.material : ''
+        remarks: r.descNote ? r.descNote : (r.material ? 'Grade '+r.material : '')
       }));
     });
   }
 
+  const sectionRowsLen = sectionRows.filter(r=>!r.noLength);
+  const sectionRowsNoLen = sectionRows.filter(r=>r.noLength);
+
   if(importUI.profileMode==='group'){
-    groupProfilesByName(sectionRows).forEach(b=>{
+    groupProfilesByName(sectionRowsLen).forEach(b=>{
       const g = ensureGroup(b.group);
       const materials = Object.keys(b.materials);
       g.rows.push(blankMaterialRow({
@@ -3631,7 +3893,7 @@ function applyImport(){
       }));
     });
   } else {
-    sectionRows.forEach(r=>{
+    sectionRowsLen.forEach(r=>{
       const g = ensureGroup((r.group||'IMPORTED ITEMS').trim().toUpperCase());
       const lenM = round4(r.lengthMm/1000);
       g.rows.push(blankMaterialRow({
@@ -3642,10 +3904,30 @@ function applyImport(){
         kgPerM: r.kgPerM ? String(r.kgPerM) : '',
         stdLength: lenM > 6 ? '12' : '6',
         unit:'No',
-        remarks: r.material ? 'Grade '+r.material : ''
+        remarks: r.descNote ? r.descNote : (r.material ? 'Grade '+r.material : '')
       }));
     });
   }
+
+  // Weight-only rows (no cut length in the source file, e.g. a Tekla Assembly List) always get
+  // their own row per profile - averaging a "length" across pieces that don't have one would be
+  // misleading. Nos reflects the real piece count; unit length is a nominal 1m so the total mass
+  // still comes through correctly, and remarks flag it clearly.
+  groupNoLengthProfiles(sectionRowsNoLen).forEach(b=>{
+    const g = ensureGroup(b.group);
+    const materials = Object.keys(b.materials);
+    g.rows.push(blankMaterialRow({
+      kind:'section', mode:'custom', category:'UB',
+      profile: b.profile,
+      nos: String(b.qty),
+      unitLength: '1',
+      kgPerM: b.qty ? String(round4(b.mass/b.qty)) : '',
+      stdLength: '6',
+      unit:'No',
+      remarks: 'No cut length in source - Element Unit Length is a nominal 1m placeholder; total mass ('+fmt(b.mass,1)+' kg) is correct'+(materials.length?'; Grade '+materials.join('/'):'')
+    }));
+  });
+
 
   state.materialGroups.forEach(g=>{ if(!g.rows.length) g.rows.push(blankMaterialRow()); });
   if(!state.materialGroups.length) state.materialGroups.push(blankGroup('IMPORTED ITEMS'));
@@ -4024,6 +4306,7 @@ document.addEventListener('input', e=>{
         r.unit = 'No';
         r.mode = 'catalog';
         r.sizeIdx = 0;
+        r.platePooled = false; r.pooledMass = 0;
         if(t.value==='plate'){ r.nos=''; r.unitLength=''; r.totalLength=''; r.mass=''; r.plateL='1220'; r.plateW='2440'; r.plateT=''; }
         else { r.nos=''; r.unitLength=''; r.stdLength='6'; r.totalLength=''; r.mass=''; r.plateL='1220'; r.plateW='2440'; r.plateT=''; }
       }
@@ -4154,6 +4437,8 @@ document.addEventListener('click', e=>{
       else if(ds.scope==='ins-ded'){ const d=(state.installer.deductions||[]).find(x=>x.id===ds.id); if(d) d.color=''; }
       saveState(); rerender(); break;
     }
+    case 'undo': doUndo(); break;
+    case 'redo': doRedo(); break;
     case 'new': if(confirm('Start a new blank requisition? Unsaved changes in this one will be lost (export first if needed).')){ state=defaultState(); saveState(); rerender(); } break;
     case 'export': { const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=(state.meta.refNo||'ropa-requisition')+'.json'; a.click(); break; }
     case 'export-xlsx': exportXLSX(); break;
@@ -4196,6 +4481,10 @@ document.addEventListener('change', e=>{
     const file=e.target.files[0]; if(!file) return;
     handleTeklaFile(file).finally(()=>{ e.target.value=''; });
   }
+  if(e.target.id==='impFileQuote'){
+    const file=e.target.files[0]; if(!file) return;
+    handleQuoteFile(file).finally(()=>{ e.target.value=''; });
+  }
   if(e.target.id==='ccQuoteFile'){
     const file=e.target.files[0]; if(!file) return;
     handleCounterCheckPdf(file).finally(()=>{ e.target.value=''; });
@@ -4207,7 +4496,7 @@ document.addEventListener('change', e=>{
 });
 document.getElementById('importFile').addEventListener('change', e=>{
   const file=e.target.files[0]; if(!file) return; const reader=new FileReader();
-  reader.onload=()=>{ try{ state=migrateState(JSON.parse(reader.result)); saveState(); rerender(); }catch(err){ alert('Could not read that file as valid JSON.'); } };
+  reader.onload=()=>{ try{ state=migrateState(JSON.parse(reader.result)); undoStack=[]; redoStack=[]; refreshHistorySnapshot(); saveState(); rerender(); }catch(err){ alert('Could not read that file as valid JSON.'); } };
   reader.readAsText(file); e.target.value='';
 });
 
@@ -4227,7 +4516,7 @@ function buildWorkbook(){
   ws1.push([]);
   const header1 = ['No','Section / Profile'];
   if(showElCols) header1.push('Element Qty','Element Length');
-  header1.push('T-Length','T-Mass','Std Order Length','Bars Reqd','Unit');
+  header1.push('T-Length','T-Mass','Std Order','Bars/Plates Reqd','Unit');
   if(showStock) header1.push('Available in Stock');
   header1.push('Qty to Order');
   ws1.push(header1);
@@ -4239,9 +4528,13 @@ function buildWorkbook(){
       const isPlate = r.kind==='plate';
       const elemQty = isPlate ? (r.qty?num(r.qty):'') : (r.nos||'');
       const elemLen = isPlate ? (plateUnitMass(r)?round2(plateUnitMass(r)):'') : (r.unitLength||'');
+      const stdOrderVal = isPlate
+        ? (num(r.stdPlateL)&&num(r.stdPlateW)&&num(r.plateT) ? r.stdPlateL+'x'+r.stdPlateW+'x'+r.plateT+'mm' : '')
+        : (r.stdLength||'');
+      const barsVal = isPlate ? (r.platePiecesNeeded||'') : (r.barsToOrder||'');
       const row = [i+1, rowDesc(r)];
       if(showElCols) row.push(elemQty, elemLen);
-      row.push(isPlate ? num(r.mass)||'' : num(r.totalLength)||'', num(r.mass)||'', isPlate?'':(r.stdLength||''), isPlate?'':(r.barsToOrder||''), normUnit(r.unit));
+      row.push(isPlate ? num(r.mass)||'' : num(r.totalLength)||'', num(r.mass)||'', stdOrderVal, barsVal, normUnit(r.unit));
       if(showStock) row.push(r.avail||'');
       row.push(r.orderQty||'');
       ws1.push(row);
@@ -4376,22 +4669,28 @@ function buildPrintHTML(){
   const m=state.meta, showStock=!!m.printStock, showElCols=!!m.printElementCols;
   const baseCols=8, colCount=baseCols+(showElCols?2:0)+(showStock?1:0);
   const matRows=state.materialGroups.map(g=>{
-    const head='<tr class="p-grouphead"><td colspan="'+colCount+'">'+esc(g.name)+'</td></tr>';
     const rows=g.rows.filter(r=>rowDesc(r) && r.print!==false).map((r,i)=>{
       const elemQty=r.kind==='plate'?(r.qty?fmt(r.qty,2):'-'):(r.nos||'-');
       const elemLen=r.kind==='plate'?(plateUnitMass(r) ? fmt(plateUnitMass(r),1) : '-'):(esc(r.unitLength)||'-');
+      const stdOrderCell = r.kind==='plate'
+        ? (num(r.stdPlateL)&&num(r.stdPlateW)&&num(r.plateT) ? esc(r.stdPlateL)+'x'+esc(r.stdPlateW)+'x'+esc(r.plateT)+'mm' : '-')
+        : (esc(r.stdLength)||'-');
+      const barsCell = r.kind==='plate' ? (r.platePiecesNeeded?fmt(r.platePiecesNeeded,0):'-') : (esc(r.barsToOrder)||'-');
       return '<tr><td class="p-no">'+(i+1)+'</td><td class="p-desc">'+esc(rowDesc(r))+'</td>'+
         (showElCols?'<td class="p-num">'+elemQty+'</td><td class="p-num">'+elemLen+'</td>':'')+
-        '<td class="p-num">'+(r.kind==='plate'?esc(r.mass)||'-':esc(r.totalLength)||'-')+'</td><td class="p-num">'+(esc(r.mass)||'-')+'</td><td class="p-num">'+(r.kind==='plate'?'-':esc(r.stdLength)||'-')+'</td><td class="p-num">'+(r.kind==='plate'?'-':esc(r.barsToOrder)||'-')+'</td><td class="p-unit">'+esc(normUnit(r.unit))+'</td>'+
+        '<td class="p-num">'+(r.kind==='plate'?esc(r.mass)||'-':esc(r.totalLength)||'-')+'</td><td class="p-num">'+(esc(r.mass)||'-')+'</td><td class="p-num">'+stdOrderCell+'</td><td class="p-num">'+barsCell+'</td><td class="p-unit">'+esc(normUnit(r.unit))+'</td>'+
         (showStock?'<td class="p-unit">'+(esc(r.avail)||'-')+'</td>':'')+
         '<td class="p-num">'+(esc(r.orderQty)||'-')+'</td></tr>';
     }).join('');
+    if(!rows) return '';
+    const head='<tr class="p-grouphead"><td colspan="'+colCount+'">'+esc(g.name)+'</td></tr>';
     return head+rows;
   }).join('');
-  const generalGroups=(state.generalGroups||[]).filter(g=>g.rows.some(r=>(r.desc||'').trim()));
+  const generalGroups=(state.generalGroups||[]).filter(g=>g.rows.some(r=>(r.desc||'').trim() && r.print!==false));
   const generalRowsHtml=generalGroups.map(g=>{
-    const head='<tr class="p-grouphead"><td colspan="5">'+esc(g.name)+'</td></tr>';
     const rows=g.rows.filter(r=>(r.desc||'').trim() && r.print!==false).map((r,i)=>'<tr><td class="p-no">'+(i+1)+'</td><td class="p-desc">'+esc(r.desc)+'</td><td class="p-num">'+(esc(r.qty)||'-')+'</td><td class="p-unit">'+esc(r.unit||'No')+'</td><td class="p-desc">'+esc(r.remarks)+'</td></tr>').join('');
+    if(!rows) return '';
+    const head='<tr class="p-grouphead"><td colspan="5">'+esc(g.name)+'</td></tr>';
     return head+rows;
   }).join('');
   const paintProc=paintProcurementRows(true);
@@ -4406,7 +4705,7 @@ function buildPrintHTML(){
   }).join('');
   const matColspan=colCount;
   const labelColspan=3+(showElCols?2:0), tailColspan=4+(showStock?1:0);
-  return '<div class="print-page"><div class="p-letterhead"><div class="p-firm-name-block"><div class="p-firm-name">ROPA ENGINEERING</div><div class="p-firm-line">Structural Steel Fabrication &amp; Erection - Nairobi, Kenya</div></div><div class="spacer" style="flex:1;"></div><div class="p-doctitle"><div class="p-doclabel">MATERIAL REQUISITION</div><div class="p-docmeta">No: '+(esc(m.refNo)||'-')+'</div><div class="p-docmeta">Date: '+esc(m.date)+'</div></div></div><div class="p-projblock"><div><b>Project:</b> '+(esc(m.project)||'-')+'</div><div><b>Client:</b> '+(esc(m.client)||'-')+'&nbsp;&nbsp;&nbsp;<b>Location:</b> '+(esc(m.location)||'-')+'</div></div><div class="p-section-title">Material Requisition</div><table class="p-table"><thead><tr><th class="p-no">No</th><th class="p-desc">Section / Profile</th>'+(showElCols?'<th>Element Qty</th><th>Element Length</th>':'')+'<th>T-Length</th><th>T-Mass</th><th>Std Order Length</th><th>Bars Reqd</th><th>Unit</th>'+(showStock?'<th>Available in Stock</th>':'')+'<th>Qty to Order</th></tr></thead><tbody>'+(matRows || '<tr><td colspan="'+matColspan+'" style="text-align:center;color:#888;">No material items entered.</td></tr>')+'</tbody><tfoot><tr class="p-sumrow"><td colspan="'+labelColspan+'" style="text-align:right;">Grand Total Mass:</td><td class="p-num">'+fmt(grandMassTotal(true),1)+' kg</td><td colspan="'+tailColspan+'"></td></tr></tfoot></table>'+(generalRowsHtml?'<div class="p-section-title">General Items / Accessories</div><table class="p-table"><thead><tr><th class="p-no">No</th><th class="p-desc">Item Description</th><th>Qty</th><th>Unit</th><th class="p-desc">Remarks</th></tr></thead><tbody>'+generalRowsHtml+'</tbody></table>':'')+(paintProc.length?'<div class="p-section-title">Paint Procurement Summary</div><table class="p-table"><thead><tr><th class="p-desc">Category</th><th class="p-desc">Product</th><th>Total Liquid (L)</th><th>Paint 80% (L)</th><th>Thinner 20% (L)</th><th>Can Size (L)</th><th>Cans to Order</th></tr></thead><tbody>'+paintRowsHtml+'</tbody><tfoot><tr class="p-sumrow"><td colspan="4" style="text-align:right;">Totals:</td><td class="p-num">'+fmt(totalThinner,2)+' L</td><td class="p-num">'+THINNER_CAN_L+'L</td><td class="p-num">'+fmt(thinnerCans,0)+' thinner cans</td></tr></tfoot></table>':'')+'<div class="p-sig-row"><div class="p-sig-col"><img class="p-sig-img" src="'+SIGNATURE_DATA_URI+'" alt="Signature"><div class="p-sig-line">Dennis Kihiu</div></div></div><div class="p-foot">Ropa Engineering - Material Requisition generated '+new Date().toLocaleDateString()+'</div></div>';
+  return '<div class="print-page"><div class="p-letterhead"><div class="p-firm-name-block"><div class="p-firm-name">ROPA ENGINEERING</div><div class="p-firm-line">Structural Steel Fabrication &amp; Erection - Nairobi, Kenya</div></div><div class="spacer" style="flex:1;"></div><div class="p-doctitle"><div class="p-doclabel">MATERIAL REQUISITION</div><div class="p-docmeta">No: '+(esc(m.refNo)||'-')+'</div><div class="p-docmeta">Date: '+esc(m.date)+'</div></div></div><div class="p-projblock"><div><b>Project:</b> '+(esc(m.project)||'-')+'</div><div><b>Client:</b> '+(esc(m.client)||'-')+'&nbsp;&nbsp;&nbsp;<b>Location:</b> '+(esc(m.location)||'-')+'</div></div><div class="p-section-title">Material Requisition</div><table class="p-table"><thead><tr><th class="p-no">No</th><th class="p-desc">Section / Profile</th>'+(showElCols?'<th>Element Qty</th><th>Element Length</th>':'')+'<th>T-Length</th><th>T-Mass</th><th>Std Order</th><th>Bars/Plates</th><th>Unit</th>'+(showStock?'<th>Available in Stock</th>':'')+'<th>Qty to Order</th></tr></thead><tbody>'+(matRows || '<tr><td colspan="'+matColspan+'" style="text-align:center;color:#888;">No material items entered.</td></tr>')+'</tbody><tfoot><tr class="p-sumrow"><td colspan="'+labelColspan+'" style="text-align:right;">Grand Total Mass:</td><td class="p-num">'+fmt(grandMassTotal(true),1)+' kg</td><td colspan="'+tailColspan+'"></td></tr></tfoot></table>'+(generalRowsHtml?'<div class="p-section-title">General Items / Accessories</div><table class="p-table"><thead><tr><th class="p-no">No</th><th class="p-desc">Item Description</th><th>Qty</th><th>Unit</th><th class="p-desc">Remarks</th></tr></thead><tbody>'+generalRowsHtml+'</tbody></table>':'')+(paintProc.length?'<div class="p-section-title">Paint Procurement Summary</div><table class="p-table"><thead><tr><th class="p-desc">Category</th><th class="p-desc">Product</th><th>Total Liquid (L)</th><th>Paint 80% (L)</th><th>Thinner 20% (L)</th><th>Can Size (L)</th><th>Cans to Order</th></tr></thead><tbody>'+paintRowsHtml+'</tbody><tfoot><tr class="p-sumrow"><td colspan="4" style="text-align:right;">Totals:</td><td class="p-num">'+fmt(totalThinner,2)+' L</td><td class="p-num">'+THINNER_CAN_L+'L</td><td class="p-num">'+fmt(thinnerCans,0)+' thinner cans</td></tr></tfoot></table>':'')+'<div class="p-sig-row"><div class="p-sig-col"><img class="p-sig-img" src="'+SIGNATURE_DATA_URI+'" alt="Signature"><div class="p-sig-line">Dennis Kihiu</div></div></div><div class="p-foot">Ropa Engineering - Material Requisition generated '+new Date().toLocaleDateString()+'</div></div>';
 }
 
 /* ===================== Cloud sync (Supabase) ===================== */
@@ -4423,7 +4722,7 @@ function disconnectCloud(){ cloud={ client:null, status:'disconnected', error:''
 async function fetchReqList(){ if(!cloud.client) return; cloud.loadingList=true; rerenderCloud(); try{ const {data,error}=await cloud.client.from(TABLE).select('id, title, updated_at').order('updated_at',{ascending:false}); if(error) throw error; cloud.list=data||[]; }catch(e){ cloud.error=(e&&e.message)||'Could not load your requisition list.'; } cloud.loadingList=false; rerenderCloud(); }
 function queueCloudSave(){ if(!cloud.client) return; cloud.status='pending'; if(cloudSaveTimer) clearTimeout(cloudSaveTimer); cloudSaveTimer=setTimeout(()=>{ cloudSaveTimer=null; saveCurrentReqToCloud(); },1200); rerenderCloud(); }
 async function saveCurrentReqToCloud(){ if(!cloud.client) return; cloud.status='saving'; rerenderCloud(); try{ const row={ id:state.id, title:reqTitle(state), data:state, updated_at:new Date().toISOString() }; const {error}=await cloud.client.from(TABLE).upsert(row); if(error) throw error; cloud.status='saved'; cloud.lastSavedAt=new Date(); cloud.error=''; localStorage.setItem(LAST_REQ_KEY,state.id); const existing=cloud.list.find(q=>q.id===state.id); if(existing){ existing.title=row.title; existing.updated_at=row.updated_at; } else cloud.list.unshift({id:row.id,title:row.title,updated_at:row.updated_at}); cloud.list.sort((a,b)=>new Date(b.updated_at)-new Date(a.updated_at)); }catch(e){ cloud.status='offline'; cloud.error=(e&&e.message)||'Save failed - will retry, your work is kept locally meanwhile.'; } rerenderCloud(); }
-async function openCloudReq(id,opts){ opts=opts||{}; if(!cloud.client) return; try{ const {data,error}=await cloud.client.from(TABLE).select('data').eq('id',id).single(); if(error) throw error; if(data&&data.data){ state=migrateState(data.data); if(!state.id) state.id=id; localStorage.setItem(LS_KEY,JSON.stringify(state)); localStorage.setItem(localCacheKey(state.id),JSON.stringify(state)); localStorage.setItem(LAST_REQ_KEY,state.id); cloud.status='connected'; cloud.panelOpen=false; cloud.error=''; rerender(); } }catch(e){ try{ const cached=localStorage.getItem(localCacheKey(id)); if(cached){ state=migrateState(JSON.parse(cached)); cloud.status='offline'; cloud.error='Showing your last locally-saved copy - could not reach the cloud.'; cloud.panelOpen=false; rerender(); return; } }catch(e2){} cloud.status='error'; cloud.error=(e&&e.message)||'Could not open that requisition.'; rerenderCloud(); } }
+async function openCloudReq(id,opts){ opts=opts||{}; if(!cloud.client) return; try{ const {data,error}=await cloud.client.from(TABLE).select('data').eq('id',id).single(); if(error) throw error; if(data&&data.data){ state=migrateState(data.data); if(!state.id) state.id=id; undoStack=[]; redoStack=[]; refreshHistorySnapshot(); localStorage.setItem(LS_KEY,JSON.stringify(state)); localStorage.setItem(localCacheKey(state.id),JSON.stringify(state)); localStorage.setItem(LAST_REQ_KEY,state.id); cloud.status='connected'; cloud.panelOpen=false; cloud.error=''; rerender(); } }catch(e){ try{ const cached=localStorage.getItem(localCacheKey(id)); if(cached){ state=migrateState(JSON.parse(cached)); undoStack=[]; redoStack=[]; refreshHistorySnapshot(); cloud.status='offline'; cloud.error='Showing your last locally-saved copy - could not reach the cloud.'; cloud.panelOpen=false; rerender(); return; } }catch(e2){} cloud.status='error'; cloud.error=(e&&e.message)||'Could not open that requisition.'; rerenderCloud(); } }
 function newCloudReq(){ state=defaultState(); saveState(); localStorage.setItem(LAST_REQ_KEY,state.id); cloud.panelOpen=false; rerender(); }
 async function deleteCloudReq(id){ if(!cloud.client) return; if(!confirm('Delete this requisition from the cloud? This cannot be undone.')) return; try{ const {error}=await cloud.client.from(TABLE).delete().eq('id',id); if(error) throw error; cloud.list=cloud.list.filter(q=>q.id!==id); if(state.id===id){ newCloudReq(); return; } }catch(e){ alert('Could not delete: '+((e&&e.message)||e)); } rerenderCloud(); }
 function toggleCloudPanel(){ cloud.panelOpen=!cloud.panelOpen; if(cloud.panelOpen&&cloud.client) fetchReqList(); rerenderCloud(); }
@@ -4440,7 +4739,7 @@ document.addEventListener('click', e=>{
 document.addEventListener('change', e=>{
   if(e.target && e.target.type==='file') suppressCloudRefresh(15000);
 }, true);
-async function refreshCurrentFromCloud(){ if(!cloud.client || cloudSaveTimer || Date.now()<suppressCloudRefreshUntil) return; try{ const {data,error}=await cloud.client.from(TABLE).select('data').eq('id',state.id).single(); if(error||!data||!data.data) return; const remote=JSON.stringify(data.data); if(remote!==JSON.stringify(state)){ const active=document.activeElement; const typing=active&&active.matches&&active.matches('.f-text, .f-num, input, select, textarea'); if(!typing){ state=migrateState(data.data); rerender(); } } }catch(e){} }
+async function refreshCurrentFromCloud(){ if(!cloud.client || cloudSaveTimer || Date.now()<suppressCloudRefreshUntil) return; try{ const {data,error}=await cloud.client.from(TABLE).select('data').eq('id',state.id).single(); if(error||!data||!data.data) return; const remote=JSON.stringify(data.data); if(remote!==JSON.stringify(state)){ const active=document.activeElement; const typing=active&&active.matches&&active.matches('.f-text, .f-num, input, select, textarea'); if(!typing){ state=migrateState(data.data); undoStack=[]; redoStack=[]; refreshHistorySnapshot(); rerender(); } } }catch(e){} }
 window.addEventListener('focus',()=>{ if(cloud.client) refreshCurrentFromCloud(); });
 document.addEventListener('visibilitychange',()=>{ if(!document.hidden&&cloud.client) refreshCurrentFromCloud(); });
 function cloudStatusLabel(){ switch(cloud.status){ case 'connected': case 'saved': return {l:'Cloud Synced',c:'ok'}; case 'saving': case 'pending': return {l:'Saving...',c:'busy'}; case 'connecting': return {l:'Connecting...',c:'busy'}; case 'offline': return {l:'Offline (local saved)',c:'warn'}; case 'error': return {l:'Sync issue',c:'warn'}; default: return {l:'Set up cloud sync',c:'off'}; } }
@@ -4455,6 +4754,16 @@ function renderCloudPanel(){
 }
 function rerenderCloud(){ const pill=document.getElementById('cloudPill'); if(pill) pill.outerHTML=renderCloudPill(); const panel=document.getElementById('cloudPanel'); if(panel) panel.outerHTML=renderCloudPanel(); }
 document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&cloud.panelOpen){ cloud.panelOpen=false; rerenderCloud(); } });
+document.addEventListener('keydown',e=>{
+  const ctrl = e.ctrlKey || e.metaKey;
+  if(!ctrl) return;
+  // don't hijack native undo inside a text field the user is actively editing
+  const ae = document.activeElement;
+  const editing = ae && ae.matches && ae.matches('input, textarea, select') && (ae.type==='text'||ae.type==='number'||ae.tagName==='TEXTAREA');
+  const key = (e.key||'').toLowerCase();
+  if(key==='z' && !e.shiftKey){ if(editing) return; e.preventDefault(); doUndo(); }
+  else if((key==='y') || (key==='z' && e.shiftKey)){ if(editing && key==='z') return; e.preventDefault(); doRedo(); }
+});
 document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&importUI.open){ importUI.open=false; renderImportModal(); } });
 document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&ccMapUI.open){ ccMapUI.open=false; renderCcMapModal(); } });
 ['dragenter','dragover'].forEach(ev=>window.addEventListener(ev, e=>{ if(e.dataTransfer && [...e.dataTransfer.types].includes('Files')){ e.preventDefault(); } }));
