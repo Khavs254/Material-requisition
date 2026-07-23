@@ -2774,7 +2774,7 @@ function plateThicknessFromText(text){ const m=String(text||'').match(/x\s*([0-9
 function blankMaterialRow(over){
   return Object.assign({
     id:uid(), kind:'section', mode:'catalog', category:'UB', sizeIdx:0, profile:'', nos:'', unitLength:'', totalLength:'', stdLength:'6', barsToOrder:'', qty:'', unit:'No', mass:'', avail:'', orderQty:'', remarks:'', print:true, color:'',
-    kgPerM:'', plateL:'1220', plateW:'2440', plateT:'', unitOrderMass:'', platePiecesNeeded:0, plateOrderPieces:0, platePooled:false, pooledMass:0, stdPlateL:'2440', stdPlateW:'1220'
+    kgPerM:'', plateL:'1220', plateW:'2440', plateT:'', unitOrderMass:'', platePiecesNeeded:0, plateOrderPieces:0, platePooled:false, pooledMass:0, stdPlateL:'2440', stdPlateW:'1220', plateTotalMass:''
   }, over||{});
 }
 function blankGroup(name){ return { id:uid(), name:name||'NEW SECTION', rows:[blankMaterialRow()] }; }
@@ -2836,6 +2836,12 @@ function migrateState(s){
       if(r.pooledMass===undefined) r.pooledMass = 0;
       if(!r.stdPlateL) r.stdPlateL = '2440';
       if(!r.stdPlateW) r.stdPlateW = '1220';
+      if(r.plateTotalMass===undefined) r.plateTotalMass = '';
+      if(r.kind==='plate' && !r.platePooled && !num(r.plateTotalMass)){
+        // Carry any existing total mass forward so older files keep working with the mass-driven model.
+        if(num(r.mass)) r.plateTotalMass = String(round4(num(r.mass)));
+        else if(num(r.nos) && num(r.unitOrderMass)) r.plateTotalMass = String(round4(num(r.nos)*num(r.unitOrderMass)));
+      }
       if(r.kind==='section'){
         if(!r.stdLength) r.stdLength = '6';
         if(!r.unitLength) r.unitLength = '';
@@ -3023,23 +3029,15 @@ function recalcAllMaterials(){
       if(totalLength && num(r.kgPerM)) r.mass = round4(totalLength * num(r.kgPerM));
       else r.mass = '';
     } else {
-      // PLATES: mass comes either from a fixed pooled total, or from pieces x per-piece mass.
-      // Ordering is always by weight: standard plates to order = total mass / weight of one
-      // standard order plate (row's own std dimensions x thickness), less any in stock.
-      let totalMass;
-      if(r.platePooled){
-        totalMass = num(r.pooledMass) || num(r.mass);
-      } else {
-        const pcs = num(r.nos);
-        const kgPc = plateUnitMass(r);
-        totalMass = kgPc ? round4(pcs * kgPc) : 0;
-        r.qty = pcs ? String(pcs) : '';
-      }
+      // PLATES: mass is entered directly (total kg at this thickness). Ordering is by weight:
+      // standard plates to order = total mass / weight of one standard order plate (row's std
+      // dimensions x thickness), less any in stock. No lengths or piece counts are used.
+      const totalMass = r.platePooled ? (num(r.pooledMass) || num(r.mass)) : num(r.plateTotalMass);
       r.mass = totalMass ? String(round4(totalMass)) : '';
       const stdKg = rowStdPlateKg(r);
       const sheetsNeeded = stdKg>0 ? ceilSafe(totalMass/stdKg) : 0;
       r.platePiecesNeeded = sheetsNeeded;
-      if(r.platePooled) r.qty = sheetsNeeded ? String(sheetsNeeded) : '';
+      r.qty = sheetsNeeded ? String(sheetsNeeded) : '';
       const order = Math.max(sheetsNeeded - num(r.avail), 0);
       r.orderQty = order ? String(order) : '';
       r.plateOrderPieces = order;
@@ -3136,7 +3134,9 @@ function renderMaterialCard(){
 }
 function renderMaterialGroup(g,gi){
   const rows = g.rows.map((r,ri)=>renderMaterialRow(g,r,ri)).join('');
-  return '<div class="group-block" data-group="'+g.id+'"><div class="group-head"><input class="f-text group-name" data-group-name="'+g.id+'" value="'+esc(g.name)+'" style="text-transform:uppercase;"><div class="spacer"></div><button class="btn btn-add" data-action="add-row" data-group="'+g.id+'">+ Section</button><button class="btn btn-add" data-action="add-plate-row" data-group="'+g.id+'">+ Plate</button><button class="btn-ghost" data-action="remove-group" data-group="'+g.id+'">Remove group</button></div>'+
+  const total = state.materialGroups.length;
+  const moveBtns = '<button class="btn-ghost" data-action="move-group-up" data-group="'+g.id+'" title="Move group up"'+(gi===0?' disabled':'')+'>↑</button><button class="btn-ghost" data-action="move-group-down" data-group="'+g.id+'" title="Move group down"'+(gi===total-1?' disabled':'')+'>↓</button>';
+  return '<div class="group-block" data-group="'+g.id+'"><div class="group-head"><input class="f-text group-name" data-group-name="'+g.id+'" value="'+esc(g.name)+'" style="text-transform:uppercase;"><div class="spacer"></div>'+moveBtns+'<button class="btn btn-add" data-action="add-row" data-group="'+g.id+'">+ Section</button><button class="btn btn-add" data-action="add-plate-row" data-group="'+g.id+'">+ Plate</button><button class="btn-ghost" data-action="duplicate-group" data-group="'+g.id+'" title="Duplicate this group and all its items">⧉ Duplicate</button><button class="btn-ghost" data-action="remove-group" data-group="'+g.id+'">Remove group</button></div>'+
     '<div class="table-scroll"><table class="items-table"><thead><tr><th class="num-col">No</th><th class="col-sm" title="Highlight this row">Color</th><th class="col-sm" title="Include this row when printing / exporting">Print</th><th class="desc-col">Section / Plate</th><th class="col-sm">Mode</th><th class="col-sm">Element Qty (Takeoff)</th><th class="col-sm">Element Unit Length</th><th class="col-sm">T-Length</th><th class="col-sm">T-Mass</th><th class="col-sm" title="Sections: standard bar length (6/12 m). Plates: standard plate size &amp; its weight">Std Order (Len / Plate)</th><th class="col-sm" title="Sections: bars required. Plates: standard plates required">Bars / Plates Reqd</th><th class="col-unit">Unit</th><th class="col-sm">Available in Stock</th><th class="col-sm">Qty to Order</th><th class="desc-col">Remarks</th><th class="rm-col"></th></tr></thead><tbody>'+rows+'</tbody><tfoot><tr class="sum-row"><td colspan="8" style="text-align:right;">Group total mass:</td><td class="readout-cell">'+fmt(groupMassTotal(g),1)+'</td><td colspan="7"></td></tr></tfoot></table></div></div>';
 }
 function renderCatalogControls(r){
@@ -3150,16 +3150,21 @@ function renderMaterialRow(g,r,ri){
   const isPlate = r.kind==='plate';
   const isPooled = isPlate && r.platePooled;
   const modeSel = '<select class="f-select" data-field="mode"><option value="catalog" '+(r.mode==='catalog'?'selected':'')+'>Catalog</option><option value="custom" '+(r.mode==='custom'?'selected':'')+'>Custom</option></select>';
-  const desc = r.mode==='catalog' ? renderCatalogControls(r) : '<input class="f-text" data-field="profile" value="'+esc(r.profile)+'" placeholder="e.g. L50*50*6 or 1220x2440x8mm plate">'+(isPlate?'<div class="mini-row"><input class="f-num" data-field="plateL" value="'+esc(r.plateL)+'" placeholder="L mm"><input class="f-num" data-field="plateW" value="'+esc(r.plateW)+'" placeholder="W mm"><input class="f-num" data-field="plateT" value="'+esc(r.plateT)+'" placeholder="T mm"></div>':'<div class="mini-row"><input class="f-num" data-field="kgPerM" value="'+esc(r.kgPerM)+'" placeholder="kg/m"></div>');
+  // Plates: connection plates rarely have meaningful individual lengths, so only the thickness matters
+  // (it sets both the plate mass and the standard-plate weight). Cut L/W inputs are hidden.
+  const desc = r.mode==='catalog'
+    ? renderCatalogControls(r)
+    : '<input class="f-text" data-field="profile" value="'+esc(r.profile)+'" placeholder="'+(isPlate?'e.g. Connection plates 8mm':'e.g. L50*50*6')+'">'+(isPlate
+        ? '<div class="mini-row"><input class="f-num" data-field="plateT" value="'+esc(r.plateT)+'" placeholder="thickness mm" title="Plate thickness"></div>'
+        : '<div class="mini-row"><input class="f-num" data-field="kgPerM" value="'+esc(r.kgPerM)+'" placeholder="kg/m"></div>');
   const computedKgPc = plateUnitMass(r);
-  // Element Qty: pooled plate carries total mass; other plates carry cut pieces
-  const nosCell = isPooled
-    ? '<input class="f-num" data-field="pooledMass" value="'+esc(r.pooledMass)+'" placeholder="total kg" title="Total pooled mass at this thickness">'
+  // Element Qty: for plates this is the TOTAL MASS (editable, kg). Sections keep piece count.
+  const nosCell = isPlate
+    ? '<input class="f-num" data-field="'+(isPooled?'pooledMass':'plateTotalMass')+'" value="'+esc(isPooled?r.pooledMass:(r.plateTotalMass||r.pooledMass||''))+'" placeholder="total kg" title="Total mass of plate at this thickness">'
     : '<input class="f-num" data-field="nos" value="'+esc(r.nos)+'" placeholder="pcs">';
+  // Element Unit Length column: blank for plates (no per-plate length shown).
   const unitOrderCell = isPlate
-    ? (isPooled
-        ? '<span class="readout-cell" title="Total pooled mass (kg)">'+(r.mass?fmt(r.mass,1):'-')+'</span>'
-        : '<input class="f-num" data-field="unitOrderMass" value="'+esc(r.unitOrderMass)+'" placeholder="'+(computedKgPc?fmt(computedKgPc,1):'kg/pc')+'">')
+    ? '<span class="readout-cell">-</span>'
     : '<input class="f-num" data-field="unitLength" value="'+esc(r.unitLength)+'" placeholder="cut length m">';
   // Std Order column: for plates, editable standard plate dimensions + computed standard-plate weight.
   const stdKg = isPlate ? rowStdPlateKg(r) : 0;
@@ -3167,7 +3172,8 @@ function renderMaterialRow(g,r,ri){
     ? '<div class="mini-row"><input class="f-num" data-field="stdPlateL" value="'+esc(r.stdPlateL)+'" placeholder="L mm" title="Standard plate length"><input class="f-num" data-field="stdPlateW" value="'+esc(r.stdPlateW)+'" placeholder="W mm" title="Standard plate width"></div><span class="readout-cell" title="Weight of one standard order plate">'+(stdKg?fmt(stdKg,1)+' kg':'set T')+'</span>'
     : '<input class="f-num" data-field="stdLength" value="'+esc(r.stdLength)+'" placeholder="6 or 12">';
   const barsCell = isPlate ? '<span class="readout-cell" title="Standard plates required">'+(r.platePiecesNeeded||'-')+'</span>' : '<span class="readout-cell">'+(r.barsToOrder||'-')+'</span>';
-  const totalCell = isPlate ? '<span class="readout-cell">'+(r.mass?fmt(r.mass,2):'-')+'</span>' : '<span class="readout-cell">'+(r.totalLength?fmt(r.totalLength,2):'-')+'</span>';
+  // T-Length column: blank for plates.
+  const totalCell = isPlate ? '<span class="readout-cell">-</span>' : '<span class="readout-cell">'+(r.totalLength?fmt(r.totalLength,2):'-')+'</span>';
   const massCell = '<span class="readout-cell">'+(esc(r.mass)||'-')+'</span>';
   const availCell = isPlate
     ? '<input class="f-num" data-field="avail" value="'+esc(r.avail)+'" placeholder="0" title="Standard plates already in stock">'
@@ -3175,7 +3181,7 @@ function renderMaterialRow(g,r,ri){
   const printCell = '<input type="checkbox" data-field="print" '+(r.print!==false?'checked':'')+' title="Include on printed/exported requisition">';
   const colorCell = '<td class="row-color-cell"><input type="color" class="row-color-swatch" data-field="color" value="'+(r.color||'#ffffff')+'" title="Highlight this row">'+(r.color?'<button type="button" class="row-color-clear" data-action="clear-row-color" data-scope="material" data-group="'+g.id+'" data-row="'+ri+'">clear</button>':'')+'</td>';
   const rowStyle = r.color ? ' style="background:'+esc(r.color)+'22;"' : '';
-  return '<tr data-group="'+g.id+'" data-row="'+ri+'" class="'+(r.print===false?'no-print-row':'')+'"'+rowStyle+'><td class="num-col">'+(ri+1)+'</td>'+colorCell+'<td class="num-col">'+printCell+'</td><td class="desc-col">'+desc+'</td><td>'+modeSel+'<select class="f-select" data-field="kind"><option value="section" '+(!isPlate?'selected':'')+'>Section</option><option value="plate" '+(isPlate?'selected':'')+'>Plate</option></select></td><td>'+nosCell+'</td><td>'+unitOrderCell+'</td><td>'+totalCell+'</td><td>'+massCell+'</td><td>'+stdLengthCell+'</td><td>'+barsCell+'</td><td><select class="f-select" data-field="unit">'+unitOptions(r.unit)+'</select></td><td>'+availCell+'</td><td class="readout-cell">'+(r.orderQty||'-')+'</td><td><input class="f-text" data-field="remarks" value="'+esc(r.remarks)+'"></td><td class="rm-col"><button class="btn-icon" data-action="remove-row" data-group="'+g.id+'" data-row="'+ri+'">x</button></td></tr>';
+  return '<tr data-group="'+g.id+'" data-row="'+ri+'" class="'+(r.print===false?'no-print-row':'')+'"'+rowStyle+'><td class="num-col">'+(ri+1)+'</td>'+colorCell+'<td class="num-col">'+printCell+'</td><td class="desc-col">'+desc+'</td><td>'+modeSel+'<select class="f-select" data-field="kind"><option value="section" '+(!isPlate?'selected':'')+'>Section</option><option value="plate" '+(isPlate?'selected':'')+'>Plate</option></select></td><td>'+nosCell+'</td><td>'+unitOrderCell+'</td><td>'+totalCell+'</td><td>'+massCell+'</td><td>'+stdLengthCell+'</td><td>'+barsCell+'</td><td><select class="f-select" data-field="unit">'+unitOptions(r.unit)+'</select></td><td>'+availCell+'</td><td class="readout-cell">'+(r.orderQty||'-')+'</td><td><input class="f-text" data-field="remarks" value="'+esc(r.remarks)+'"></td><td class="rm-col"><button class="btn-icon" data-action="duplicate-row" data-group="'+g.id+'" data-row="'+ri+'" title="Duplicate this row">⧉</button><button class="btn-icon" data-action="remove-row" data-group="'+g.id+'" data-row="'+ri+'">x</button></td></tr>';
 }
 /* ============================ GENERAL ITEMS ============================ */
 function renderGeneralCard(){
@@ -3185,7 +3191,9 @@ function renderGeneralCard(){
 }
 function renderGeneralGroup(g,gi){
   const rows = g.rows.map((r,ri)=>renderGeneralRow(g,r,ri)).join('');
-  return '<div class="group-block" data-ggroup="'+g.id+'"><div class="group-head"><input class="f-text group-name" data-ggroup-name="'+g.id+'" value="'+esc(g.name)+'" style="text-transform:uppercase;"><div class="spacer"></div><button class="btn btn-add" data-action="add-general-row" data-ggroup="'+g.id+'">+ Item</button><button class="btn-ghost" data-action="remove-general-group" data-ggroup="'+g.id+'">Remove group</button></div>'+
+  const total = (state.generalGroups||[]).length;
+  const moveBtns = '<button class="btn-ghost" data-action="move-ggroup-up" data-ggroup="'+g.id+'" title="Move group up"'+(gi===0?' disabled':'')+'>↑</button><button class="btn-ghost" data-action="move-ggroup-down" data-ggroup="'+g.id+'" title="Move group down"'+(gi===total-1?' disabled':'')+'>↓</button>';
+  return '<div class="group-block" data-ggroup="'+g.id+'"><div class="group-head"><input class="f-text group-name" data-ggroup-name="'+g.id+'" value="'+esc(g.name)+'" style="text-transform:uppercase;"><div class="spacer"></div>'+moveBtns+'<button class="btn btn-add" data-action="add-general-row" data-ggroup="'+g.id+'">+ Item</button><button class="btn-ghost" data-action="duplicate-ggroup" data-ggroup="'+g.id+'" title="Duplicate this group and all its items">⧉ Duplicate</button><button class="btn-ghost" data-action="remove-general-group" data-ggroup="'+g.id+'">Remove group</button></div>'+
     '<div class="table-scroll"><table class="items-table"><thead><tr><th class="num-col">No</th><th class="col-sm" title="Highlight this row">Color</th><th class="col-sm" title="Include this row when printing / exporting">Print</th><th class="desc-col">Item Description</th><th class="col-sm">Qty</th><th class="col-unit">Unit</th><th class="desc-col">Remarks</th><th class="rm-col"></th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
 }
 function generalUnitOptions(selected){
@@ -3861,15 +3869,14 @@ function applyImport(){
   } else {
     plateRows.forEach(r=>{
       const g = ensureGroup((r.group||'IMPORTED ITEMS').trim().toUpperCase());
+      const totalMass = round4(num(r.massEach) * num(r.qty)) || num(r.massTotal) || 0;
       g.rows.push(blankMaterialRow({
         kind:'plate', mode:'custom', category:'plates',
         profile: r.profile,
-        plateL: r.lengthMm ? String(r.lengthMm) : '',
-        plateW: r.plateW ? String(r.plateW) : '',
         plateT: r.plateT ? String(r.plateT) : '',
-        unitOrderMass: r.massEach ? String(round4(r.massEach)) : '',
-        nos: String(r.qty), unit:'No',
-        remarks: r.descNote ? r.descNote : (r.material ? 'Grade '+r.material : '')
+        plateTotalMass: totalMass ? String(totalMass) : '',
+        unit:'No',
+        remarks: (r.descNote ? r.descNote : (r.material ? 'Grade '+r.material : '')) + (num(r.qty)>1 ? (r.descNote||r.material?'; ':'')+fmt(r.qty,0)+' pcs' : '')
       }));
     });
   }
@@ -3881,6 +3888,8 @@ function applyImport(){
     groupProfilesByName(sectionRowsLen).forEach(b=>{
       const g = ensureGroup(b.group);
       const materials = Object.keys(b.materials);
+      // Pool different-length cuts of the same profile into ONE row: quantity 1, the pooled total
+      // length as the element unit length, and kg/m back-derived so total mass is exactly the sum.
       g.rows.push(blankMaterialRow({
         kind:'section', mode:'custom', category:'UB',
         profile: b.profile,
@@ -3889,7 +3898,7 @@ function applyImport(){
         kgPerM: (b.lenM>0 && b.mass>0) ? String(round4(b.mass/b.lenM)) : '',
         stdLength: b.lenM > 6 ? '12' : '6',
         unit:'No',
-        remarks: fmt(b.qty,0)+' pcs in '+b.cuts+' cut length'+(b.cuts>1?'s':'')+(materials.length?'; Grade '+materials.join('/'):'')
+        remarks: 'Pooled '+fmt(b.qty,0)+' pc(s) / '+b.cuts+' cut length'+(b.cuts>1?'s':'')+' -> '+fmt(b.lenM,2)+' m total, '+fmt(b.mass,1)+' kg'+(materials.length?'; Grade '+materials.join('/'):'')
       }));
     });
   } else {
@@ -4445,15 +4454,22 @@ document.addEventListener('click', e=>{
     case 'print': doPrint(); break;
     case 'add-group': state.materialGroups.push(blankGroup('NEW SECTION')); saveState(); rerender(); break;
     case 'remove-group': if(confirm('Remove this entire section group?')){ state.materialGroups=state.materialGroups.filter(g=>g.id!==ds.group); saveState(); rerender(); } break;
+    case 'move-group-up': { const i=state.materialGroups.findIndex(g=>g.id===ds.group); if(i>0){ const a=state.materialGroups; [a[i-1],a[i]]=[a[i],a[i-1]]; saveState(); rerender(); } break; }
+    case 'move-group-down': { const i=state.materialGroups.findIndex(g=>g.id===ds.group); if(i>=0 && i<state.materialGroups.length-1){ const a=state.materialGroups; [a[i+1],a[i]]=[a[i],a[i+1]]; saveState(); rerender(); } break; }
+    case 'duplicate-group': { const i=state.materialGroups.findIndex(g=>g.id===ds.group); if(i>=0){ const src=state.materialGroups[i]; const copy=JSON.parse(JSON.stringify(src)); copy.id=uid(); copy.name=(src.name||'GROUP')+' (COPY)'; (copy.rows||[]).forEach(r=>r.id=uid()); state.materialGroups.splice(i+1,0,copy); saveState(); rerender(); } break; }
     case 'add-row': { const g=state.materialGroups.find(x=>x.id===ds.group); if(g) g.rows.push(blankMaterialRow({kind:'section',category:'UB'})); saveState(); rerender(); break; }
     case 'add-plate-row': { const g=state.materialGroups.find(x=>x.id===ds.group); if(g) g.rows.push(blankMaterialRow({kind:'plate',category:'plates',unitLength:'',unit:'No'})); saveState(); rerender(); break; }
     case 'remove-row': { const g=state.materialGroups.find(x=>x.id===ds.group); if(g){ g.rows.splice(+ds.row,1); if(!g.rows.length) g.rows.push(blankMaterialRow()); } saveState(); rerender(); break; }
+    case 'duplicate-row': { const g=state.materialGroups.find(x=>x.id===ds.group); if(g){ const src=g.rows[+ds.row]; if(src){ const copy=JSON.parse(JSON.stringify(src)); copy.id=uid(); g.rows.splice(+ds.row+1,0,copy); } } saveState(); rerender(); break; }
     case 'add-paint': state.paintRows.push(blankPaintRow()); saveState(); rerender(); break;
     case 'remove-paint': state.paintRows=state.paintRows.filter(p=>p.id!==ds.paint); saveState(); rerender(); break;
     case 'add-coat': { const p=state.paintRows.find(x=>x.id===ds.paint); if(p){ (p.coats=p.coats||[]).push(blankPaintCoat('New Coat','',10,4,true)); } saveState(); rerender(); break; }
     case 'remove-coat': { const p=state.paintRows.find(x=>x.id===ds.paint); if(p && p.coats && p.coats.length>1){ p.coats=p.coats.filter(c=>c.id!==ds.coat); } saveState(); rerender(); break; }
     case 'add-general-group': (state.generalGroups=state.generalGroups||[]).push(blankGeneralGroup('NEW ITEM GROUP')); saveState(); rerender(); break;
     case 'remove-general-group': if(confirm('Remove this item group?')){ state.generalGroups=(state.generalGroups||[]).filter(g=>g.id!==ds.ggroup); saveState(); rerender(); } break;
+    case 'move-ggroup-up': { const a=state.generalGroups||[]; const i=a.findIndex(g=>g.id===ds.ggroup); if(i>0){ [a[i-1],a[i]]=[a[i],a[i-1]]; saveState(); rerender(); } break; }
+    case 'move-ggroup-down': { const a=state.generalGroups||[]; const i=a.findIndex(g=>g.id===ds.ggroup); if(i>=0 && i<a.length-1){ [a[i+1],a[i]]=[a[i],a[i+1]]; saveState(); rerender(); } break; }
+    case 'duplicate-ggroup': { const a=state.generalGroups||[]; const i=a.findIndex(g=>g.id===ds.ggroup); if(i>=0){ const copy=JSON.parse(JSON.stringify(a[i])); copy.id=uid(); copy.name=(a[i].name||'GROUP')+' (COPY)'; (copy.rows||[]).forEach(r=>r.id=uid()); a.splice(i+1,0,copy); saveState(); rerender(); } break; }
     case 'add-general-row': { const g=(state.generalGroups||[]).find(x=>x.id===ds.ggroup); if(g) g.rows.push(blankGeneralRow()); saveState(); rerender(); break; }
     case 'remove-general-row': { const g=(state.generalGroups||[]).find(x=>x.id===ds.ggroup); if(g){ g.rows.splice(+ds.grow,1); if(!g.rows.length) g.rows.push(blankGeneralRow()); } saveState(); rerender(); break; }
     /* installer requisition */
@@ -4526,15 +4542,15 @@ function buildWorkbook(){
     ws1.push([g.name]);
     rows.forEach((r,i)=>{
       const isPlate = r.kind==='plate';
-      const elemQty = isPlate ? (r.qty?num(r.qty):'') : (r.nos||'');
-      const elemLen = isPlate ? (plateUnitMass(r)?round2(plateUnitMass(r)):'') : (r.unitLength||'');
+      const elemQty = isPlate ? '' : (r.nos||'');
+      const elemLen = isPlate ? '' : (r.unitLength||'');
       const stdOrderVal = isPlate
         ? (num(r.stdPlateL)&&num(r.stdPlateW)&&num(r.plateT) ? r.stdPlateL+'x'+r.stdPlateW+'x'+r.plateT+'mm' : '')
         : (r.stdLength||'');
       const barsVal = isPlate ? (r.platePiecesNeeded||'') : (r.barsToOrder||'');
       const row = [i+1, rowDesc(r)];
       if(showElCols) row.push(elemQty, elemLen);
-      row.push(isPlate ? num(r.mass)||'' : num(r.totalLength)||'', num(r.mass)||'', stdOrderVal, barsVal, normUnit(r.unit));
+      row.push(isPlate ? '' : num(r.totalLength)||'', num(r.mass)||'', stdOrderVal, barsVal, normUnit(r.unit));
       if(showStock) row.push(r.avail||'');
       row.push(r.orderQty||'');
       ws1.push(row);
@@ -4670,15 +4686,17 @@ function buildPrintHTML(){
   const baseCols=8, colCount=baseCols+(showElCols?2:0)+(showStock?1:0);
   const matRows=state.materialGroups.map(g=>{
     const rows=g.rows.filter(r=>rowDesc(r) && r.print!==false).map((r,i)=>{
-      const elemQty=r.kind==='plate'?(r.qty?fmt(r.qty,2):'-'):(r.nos||'-');
-      const elemLen=r.kind==='plate'?(plateUnitMass(r) ? fmt(plateUnitMass(r),1) : '-'):(esc(r.unitLength)||'-');
-      const stdOrderCell = r.kind==='plate'
+      const isPl = r.kind==='plate';
+      const elemQty=isPl?'-':(r.nos||'-');
+      const elemLen=isPl?'-':(esc(r.unitLength)||'-');
+      const tLenCell=isPl?'-':(esc(r.totalLength)||'-');
+      const stdOrderCell = isPl
         ? (num(r.stdPlateL)&&num(r.stdPlateW)&&num(r.plateT) ? esc(r.stdPlateL)+'x'+esc(r.stdPlateW)+'x'+esc(r.plateT)+'mm' : '-')
         : (esc(r.stdLength)||'-');
-      const barsCell = r.kind==='plate' ? (r.platePiecesNeeded?fmt(r.platePiecesNeeded,0):'-') : (esc(r.barsToOrder)||'-');
+      const barsCell = isPl ? (r.platePiecesNeeded?fmt(r.platePiecesNeeded,0):'-') : (esc(r.barsToOrder)||'-');
       return '<tr><td class="p-no">'+(i+1)+'</td><td class="p-desc">'+esc(rowDesc(r))+'</td>'+
         (showElCols?'<td class="p-num">'+elemQty+'</td><td class="p-num">'+elemLen+'</td>':'')+
-        '<td class="p-num">'+(r.kind==='plate'?esc(r.mass)||'-':esc(r.totalLength)||'-')+'</td><td class="p-num">'+(esc(r.mass)||'-')+'</td><td class="p-num">'+stdOrderCell+'</td><td class="p-num">'+barsCell+'</td><td class="p-unit">'+esc(normUnit(r.unit))+'</td>'+
+        '<td class="p-num">'+tLenCell+'</td><td class="p-num">'+(esc(r.mass)||'-')+'</td><td class="p-num">'+stdOrderCell+'</td><td class="p-num">'+barsCell+'</td><td class="p-unit">'+esc(normUnit(r.unit))+'</td>'+
         (showStock?'<td class="p-unit">'+(esc(r.avail)||'-')+'</td>':'')+
         '<td class="p-num">'+(esc(r.orderQty)||'-')+'</td></tr>';
     }).join('');
